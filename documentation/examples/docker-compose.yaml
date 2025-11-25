@@ -1,0 +1,117 @@
+# Edge-SIP2 Docker Compose Example
+#
+# Usage:
+#   docker-compose up -d          # Start in background
+#   docker-compose logs -f        # View logs
+#   docker-compose down           # Stop and remove containers
+#
+# Prerequisites:
+#   - Ensure basic.yaml and tenant-config.yaml are in this directory
+#   - Update okapiUrl in basic.yaml to point to your FOLIO instance
+#   - Update tenant settings in tenant-config.yaml
+
+version: '3.8'
+
+services:
+  edge-sip2:
+    # Build from local Dockerfile (uncomment to build locally)
+    # build:
+    #   context: ../..
+    #   dockerfile: Dockerfile
+    #   args:
+    #     VERSION: "1.0.0"
+    #     BUILD_DATE: "${BUILD_DATE:-}"
+    #     GIT_COMMIT: "${GIT_COMMIT:-unknown}"
+
+    # Use pre-built image (comment out if building locally)
+    image: edge-sip2:latest
+
+    container_name: edge-sip2
+
+    # Restart policy
+    restart: unless-stopped
+
+    # Port mappings
+    ports:
+      # SIP2 protocol server (TCP)
+      - "6443:6443"
+      # Health check and metrics (HTTP)
+      - "8081:8081"
+
+    # Volume mounts
+    volumes:
+      # Configuration files (read-only for security)
+      - ./basic.yaml:/etc/edge-sip2/config.yaml:ro
+      - ./tenant-config.yaml:/etc/edge-sip2/tenant-config.yaml:ro
+
+      # Log directory (for persistent logging)
+      - ../../log:/app/log
+
+      # TLS certificates (uncomment if using TLS)
+      # - ./certs:/etc/edge-sip2/certs:ro
+
+    # Health check configuration
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/admin/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Network configuration
+    networks:
+      - sip2-network
+
+# Network definitions
+networks:
+  sip2-network:
+    driver: bridge
+    name: edge-sip2-network
+
+# Example with multiple configurations:
+#
+# services:
+#   edge-sip2-prod:
+#     image: edge-sip2:latest
+#     container_name: edge-sip2-prod
+#     ports:
+#       - "6443:6443"
+#       - "8081:8081"
+#     volumes:
+#       - ./production/config.yaml:/etc/edge-sip2/config.yaml:ro
+#       - ./production/tenant-config.yaml:/etc/edge-sip2/tenant-config.yaml:ro
+#       - /var/log/edge-sip2:/app/log
+#     restart: always
+#     networks:
+#       - sip2-network
+#
+#   edge-sip2-staging:
+#     image: edge-sip2:latest
+#     container_name: edge-sip2-staging
+#     ports:
+#       - "6444:6443"
+#       - "8082:8081"
+#     volumes:
+#       - ./staging/config.yaml:/etc/edge-sip2/config.yaml:ro
+#       - ./staging/tenant-config.yaml:/etc/edge-sip2/tenant-config.yaml:ro
+#       - /var/log/edge-sip2-staging:/app/log
+#     restart: unless-stopped
+#     networks:
+#       - sip2-network

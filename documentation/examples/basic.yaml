@@ -1,0 +1,32 @@
+# Basic edge-sip2 configuration example
+# This is the main bootstrap configuration file
+
+# SIP2 server port
+port: 6443
+
+# FOLIO Okapi URL (can be overridden per tenant)
+okapiUrl: https://okapi.example.com
+
+# HTTP health check port
+healthCheckPort: 8081
+
+# Maximum number of cached authentication tokens
+tokenCacheCapacity: 100
+
+# Configuration reload scan period (milliseconds)
+scanPeriod: 300000
+
+# Application log level (debug, info, warn, error)
+logLevel: info
+
+# Tenant configuration sources
+# Configurations will be loaded from these sources in order
+tenantConfigSources:
+  - type: file
+    path: ./documentation/examples/tenant-config.yaml
+
+# Optional: TLS/SSL configuration
+# tls:
+#   enabled: true
+#   certFile: /etc/ssl/certs/server.crt
+#   keyFile: /etc/ssl/private/server.key

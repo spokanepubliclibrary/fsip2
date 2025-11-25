@@ -1,0 +1,288 @@
+# Tenant-specific SIP2 configuration
+
+# Default tenant identifier
+tenant: diku
+
+# Enable/disable checksum validation (AY/AZ fields)
+errorDetectionEnabled: true
+
+# Message terminator: \r (CR), \n (LF), \r\n (CRLF), or custom string
+messageDelimiter: "\r"
+
+# Field delimiter (usually | for standard SIP2)
+fieldDelimiter: "|"
+
+# Character encoding: IBM850, ISO-8859-1, UTF-8, etc.
+charset: IBM850
+
+# Timezone for date/time formatting
+timezone: America/New_York
+
+# Log level for SIP2 messages
+# Options: Debugging, Full, Patron, None
+# - Debugging: All messages logged with no obfuscation
+# - Full: All messages except 93/94 (login), PINs obfuscated
+# - Patron: Only 63/64 (patron info) messages, PINs obfuscated
+# - None: No message logging (default)
+logLevel: Full
+
+# FOLIO Okapi connection
+okapiUrl: https://okapi-diku.example.com
+okapiTenant: diku
+
+# Multi-tenant configuration (optional)
+# Allows different tenants to be resolved based on connection properties
+scTenants:
+  - tenant: library1
+    scSubnet: 192.168.1.0/24  # IPv4 CIDR
+    port: 6443
+    locationCodes:
+      - 550e8400-e29b-41d4-a716-446655440000  # Service point UUID
+    usernamePrefixes:
+      - "lib1_"
+
+  - tenant: library2
+    scSubnet: 192.168.2.0/24
+    port: 6444
+    locationCodes:
+      - 660e8400-e29b-41d4-a716-446655440001
+    usernamePrefixes:
+      - "lib2_"
+
+# Supported SIP2 messages
+# Set enabled: true for each message type you want to support
+# These settings also affect the BX field (supported messages) in the 98 (ACS Status Response)
+#
+# BX Field Positions in 98 Response (16 characters, Y=supported, N=not supported):
+#   Position 1:  23 - Patron Status Request
+#   Position 2:  11 - Checkout
+#   Position 3:  09 - Checkin
+#   Position 4:  01 - Block Patron (NOT IMPLEMENTED - always N)
+#   Position 5:  99 - SC/ACS Status
+#   Position 6:  97 - Request SC/ACS Resend
+#   Position 7:  93 - Login
+#   Position 8:  63 - Patron Information
+#   Position 9:  35 - End Patron Session
+#   Position 10: 37 - Fee Paid
+#   Position 11: 17 - Item Information
+#   Position 12: 19 - Item Status Update
+#   Position 13: 25 - Patron Enable (NOT IMPLEMENTED - always N)
+#   Position 14: 15 - Hold
+#   Position 15: 29 - Renew
+#   Position 16: 65 - Renew All
+#
+# IMPORTANT: Messages 01 (Block Patron) and 25 (Patron Enable) are not implemented in this SIP2 service.
+# These will always show as 'N' in the BX field regardless of the enabled setting.
+supportedMessages:
+  - code: "23"  # Patron Status; BX position 1 in 98 response
+    enabled: true
+  - code: "11"  # Checkout; BX position 2 in 98 response
+    enabled: true
+  - code: "09"  # Checkin; BX position 3 in 98 response
+    enabled: true
+  - code: "01"  # Block Patron; BX position 4 in 98 response
+    enabled: false  # NOT IMPLEMENTED by this SIP2 service. Setting to true will be ignored; BX always shows N
+  - code: "63"  # Patron Information; BX position 8 in 98 response
+    enabled: true
+    # Configurable fields for Patron Information Response (64)
+    fields:
+      # Optional patron contact fields
+      - code: "BF"  # Patron Phone (key: personal.phone)
+        enabled: true
+      - code: "BG"  # Patron Cell Number (key: personal.mobilePhone)
+        enabled: true
+      # Unavailable holds field
+      - code: "CD"  # Unavailable holds – Returns UUID of the instance or item barcode
+        enabled: true
+      # Patron group fields
+      - code: "FU"  # Patron Group name
+        enabled: true
+      - code: "FV"  # Patron Group description
+        enabled: true
+      - code: "PC"  # Patron Group UUID
+        enabled: true
+      # Personal information
+      - code: "PB"  # Birthdate MMDDYYYY
+        enabled: true
+  - code: "17"  # Item Information; BX position 11 in 98 response
+    enabled: true
+    # Configurable fields for Item Information Response (18)
+    fields:
+      # Core bibliographic fields
+      - code: "AJ"  # Title Identifier (instance title, 60 chars)
+        enabled: true
+      - code: "AQ"  # Permanent Location
+        enabled: true
+      - code: "AP"  # Current Location
+        enabled: true
+      - code: "AH"  # Due Date (if checked out)
+        enabled: true
+      - code: "CK"  # Media Type (SIP2 code)
+        enabled: true
+      - code: "CH"  # Material Type (plain text)
+        enabled: true
+      - code: "CS"  # Effective Call Number
+        enabled: true
+      - code: "CT"  # Routing Location
+        enabled: true
+      - code: "CF"  # Hold Queue Length
+        enabled: true
+
+      # Extended bibliographic fields
+      - code: "EA"  # Primary Contributor
+        enabled: true
+      - code: "DE"  # Work Description (instance note - summary, 255 chars)
+        enabled: true
+      - code: "IN"  # ISBNs (repeatable)
+        enabled: true
+      - code: "NB"  # Other Standard Identifier and UPC (repeatable)
+        enabled: true
+
+      # Request/hold fields
+      - code: "CM"  # Hold Shelf Expiration Date
+        enabled: true
+      - code: "CY"  # Requestor Barcode
+        enabled: true
+      - code: "DA"  # Requestor lastName, firstName
+        enabled: true
+  - code: "29"  # Renew; BX position 15 in 98 response
+    enabled: true
+  - code: "65"  # Renew All; BX position 16 in 98 response
+    enabled: true
+  - code: "35"  # End Patron Session; BX position 9 in 98 response
+    enabled: true
+  - code: "37"  # Fee Paid; BX position 10 in 98 response
+    enabled: true
+  - code: "19"  # Item Status Update; BX position 12 in 98 response
+    enabled: true
+  - code: "25"  # Patron Enable; BX position 13 in 98 response
+    enabled: false  # NOT IMPLEMENTED by this SIP2 service. Setting to true will be ignored; BX always shows N
+  - code: "15"  # Hold; BX position 14 in 98 response
+    enabled: false
+  - code: "99"  # SC Status; BX position 5 in 98 response
+    enabled: true
+  - code: "93"  # Login; BX position 7 in 98 response
+    enabled: true
+  - code: "97"  # Request ACS Resend; BX position 6 in 98 response
+    enabled: true
+
+# FOLIO-specific settings
+patronPasswordVerificationRequired: false # If true, patron PIN (or password) is verified against FOLIO user record
+usePinForPatronVerification: true # If true, use the PIN for verification; if false, use password field
+invalidCheckinStatuses: "Withdrawn,Lost and paid"
+statusUpdateOk: true
+offlineOk: false
+
+# Claimed returned material resolution during checkin
+# Determines how to handle items marked as "claimed returned" during checkin
+# Options:
+#   - patron: Item was returned by patron (sends "Returned by patron" to FOLIO)
+#   - library: Item was found by library staff (sends "Found by library" to FOLIO)
+#   - none: Disallow checkin, return error message to patron
+# Default: none (disallow checkin)
+claimedReturnedResolution: patron
+
+# ACS Status Response (98) settings
+# These settings control the timeout and retry fields in the 98 (ACS Status Response)
+# The AN field (Terminal Location) is automatically populated from the CP field provided during login (93)
+timeoutPeriod: 30    # Timeout in seconds (000-999) sent in 98 response (default: 30)
+retriesAllowed: 3    # Number of retries allowed (000-999) sent in 98 response (default: 3)
+
+# Maximum items to process in a Renew All request (default: 50)
+# This limits the number of items renewed in a single 65 (Renew All) request
+# to prevent performance issues with large patron loan counts
+renewAllMaxItems: 50
+
+# Rolling renewal settings (for message 23 or 63 - Patron Status and Patron Information)
+# Automatically extends patron expiration dates when they authenticate
+# If enabled, the SIP account used on this service will require the following FOLIO permissions:  
+# - users.item.put (to update user records)
+# - users.item.get (to fetch user records)
+# Caution: if `extendExpired` is set to `true` reactivation of intentionally deactivated accounts is possible. 
+# - Make sure to configure `selectPatrons` and `allowedPatrons` to limit which patron groups are affected and 
+# - move intentionally deactivated accounts to a different patron group.
+rollingRenewals:
+  enabled: true         # Master switch - set to true to enable rolling renewals
+  renewWithin: 6M        # Renew if expiration is within 6 months of today (case-insensitive: M/D/Y)
+  extendFor: 6Y          # Extend expiration to 6 years from today (case-insensitive: M/D/Y)
+  extendExpired: true    # If true: extend expired accounts from today and reactivate them; If false: skip expired accounts
+  extendExpiredLimits: 6M    # Do not renew patron if expiration is more than 6 months in the past (case-insensitive: M/D/Y); leave blank for no limit. 
+  dryRun: false          # If true: log what would happen without updating records
+  selectPatrons: true   # If true: only renew patron groups in allowedPatrons list
+  allowedPatrons:
+    - "60f7f0f0-1d2b-11ec-9621-0242ac130002"  # UUID of allowed patron group
+    - "70f7f0f0-1d2b-11ec-9621-0242ac130003"  # UUID of allowed patron group
+    # - uuid-3
+
+# Fee/Fine payment settings (for message 37 - Fee Paid)
+# Enable bulk payment fallback when account ID (CG field) is not found or not provided
+# If true: distributes payment evenly across all eligible open accounts
+# If false: returns error when account ID is not found
+acceptBulkPayment: false
+
+# Default payment method for fee/fine payments
+# Common values: "Credit card", "Cash", "Check", "Debit card"
+# This value is sent to FOLIO when recording payments
+paymentMethod: "Credit card"
+
+# Notify patron via email/SMS in MOD-Patron when payment is recorded
+# Default: false
+notifyPatron: false
+
+# Circulation Status Mapping
+# Maps FOLIO item status names to SIP2 circulation status codes
+# SIP2 codes: 01=Other, 02=On order, 03=Available, 04=Charged, 05=Charged (no recall),
+#             06=In process, 07=Recalled, 08=Waiting on hold shelf, 09=Waiting to be re-shelved,
+#             10=In transit, 11=Claimed returned, 12=Lost, 13=Missing
+circulationStatusMapping:
+  "Available": "03"
+  "Checked out": "04"
+  "In process": "06"
+  "Awaiting pickup": "08"
+  "In transit": "10"
+  "Claimed returned": "11"
+  "Lost and paid": "12"
+  "Aged to lost": "12"
+  "Declared lost": "12"
+  "Missing": "13"
+  "Withdrawn": "01"
+  "On order": "02"
+  "Paged": "08"
+  # Default fallback
+  "default": "01"  # Other
+
+
+# Patron Custom Fields Configuration
+# Maps FOLIO user customFields to SIP2 response fields (SA-SZ) in patron information response (64)
+patronCustomFields:
+  enabled: true  # Master switch - set to false to disable custom fields
+  fields:
+    - code: SA              # SIP2 field code (SA-SZ only)
+      source: exampleOne    # Key in user.customFields from FOLIO
+      type: string          # Data type: string, boolean, array
+      maxLength: 60         # Maximum length (default: 60)
+
+    - code: SB
+      source: solusPermissions
+      type: array
+      arrayDelimiter: ","   # How to join array elements (default: ",")
+      maxLength: 60
+
+    - code: SM
+      source: meetingRoomPermissions
+      type: string
+      maxLength: 60
+
+    - code: SD
+      source: lotWaiver
+      type: boolean
+      maxLength: 60
+#
+# Notes:
+# - Field codes must be SA-SZ (case-insensitive, no duplicates)
+# - Fields are output in the order defined here
+# - Types: string, boolean, array
+# - Missing or empty fields are skipped (no error)
+# - Values containing pipe (|) or newlines are skipped
+# - Values exceeding maxLength are truncated
+# - Quotes in values are kept as-is (safe in SIP2)
