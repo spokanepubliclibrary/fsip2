@@ -1,4 +1,4 @@
-# Edge-SIP2 (Go Implementation)
+# FOLIO SIP (FSIP) - the Edge-SIP2 Go implementation
 
 [![Go Version](https://img.shields.io/badge/go-1.23-blue.svg)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
