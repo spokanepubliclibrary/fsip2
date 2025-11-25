@@ -676,7 +676,7 @@ Each position is 'Y' (true) or ' ' (space, false):
 | Print Line | AG | No | Print messages | Not implemented |
 
 ### Additional details about fee/fine messages
-See [documentation/fee_fines.md](documentation/fee_fines.md) for additional reference. 
+See [fee_fines.md](fee_fines.md) for additional reference. 
 
 ### Configuration Options
 
@@ -778,7 +778,7 @@ Each position controls inclusion of detail fields (Y/N):
 
 
 ### Additional details about fee/fine messages
-See [documentation/fee_fines.md](documentation/fee_fines.md) for additional reference. 
+See [fee_fines.md](fee_fines.md) for additional reference. 
 
 ### Custom Fields (SA-SZ)
 
