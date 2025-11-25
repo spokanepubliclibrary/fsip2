@@ -1,4 +1,4 @@
-# FOLIO SIP (FSIP) - the Edge-SIP2 Go implementation
+# FOLIO SIP2 (FSIP2) - the Edge-SIP2 Go implementation
 
 [![Go Version](https://img.shields.io/badge/go-1.23-blue.svg)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -7,7 +7,7 @@ A high-performance Go implementation of the SIP2 (Standard Interchange Protocol)
 
 **Inspired by:** [folio-org/edge-sip2](https://github.com/folio-org/edge-sip2)
 **Version:** 1.0.0
-**Target FOLIO Release:** Quesnelia (Flower)
+
 
 ## Overview
 
