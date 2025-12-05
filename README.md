@@ -40,6 +40,12 @@ Edge-SIP2 is a bridge application that connects self-service library kiosks with
 See See [documentation/field_mapping.md](documentation/field_mapping.md) for comprehensive list of supported fields, configuration details, and data sources.
 
 
+### Confirmed 100% Vendor Support (compared to Edge-SIP2)
+- Envisionware (Full suite) ✅
+- Comprise (Terminals, SAM, SmartPay, SmartAlec) ✅
+- MK Solutions (Full suite) ✅
+- Illion (TalkingTech) iTiva Connect ✅
+
 ### Configuration
 - YAML-based configuration
 - Multi-source config loading (file, HTTP, S3)
