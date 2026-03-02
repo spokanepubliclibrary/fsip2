@@ -1,0 +1,33 @@
+{
+  "id": "user-123",
+  "username": "testuser",
+  "externalSystemId": "EXT-12345",
+  "barcode": "123456",
+  "active": true,
+  "type": "patron",
+  "patronGroup": "adults",
+  "personal": {
+    "lastName": "Doe",
+    "firstName": "John",
+    "preferredFirstName": "Johnny",
+    "middleName": "Q",
+    "email": "jdoe@example.com",
+    "phone": "+1-555-123-4567",
+    "mobilePhone": "+1-555-987-6543",
+    "addresses": [
+      {
+        "id": "addr-1",
+        "addressLine1": "123 Main Street",
+        "addressLine2": "Apt 4B",
+        "city": "Anytown",
+        "region": "ST",
+        "postalCode": "12345",
+        "countryId": "US",
+        "addressTypeId": "home",
+        "primaryAddress": true
+      }
+    ]
+  },
+  "enrollmentDate": "2020-01-15T00:00:00.000Z",
+  "expirationDate": "2030-12-31T23:59:59.000Z"
+}

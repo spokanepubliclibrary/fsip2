@@ -1,0 +1,21 @@
+{
+  "id": "loan-5555-eeee-ffff-0000",
+  "userId": "6634567-89ab-cdef-0123-456789abcdef",
+  "itemId": "item-8888-9999-0000-1111",
+  "status": {
+    "name": "Open"
+  },
+  "loanDate": "2024-11-10T10:00:00.000Z",
+  "dueDate": "2024-12-10T23:59:59.000Z",
+  "renewalCount": 0,
+  "dueDateChangedByRecall": true,
+  "item": {
+    "barcode": "ITEM-RECALLED",
+    "title": "Recalled Book",
+    "callNumber": "PR6056 T5"
+  },
+  "metadata": {
+    "createdDate": "2024-11-10T10:00:00.000Z",
+    "updatedDate": "2024-11-25T09:00:00.000Z"
+  }
+}

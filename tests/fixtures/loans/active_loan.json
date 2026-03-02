@@ -1,0 +1,19 @@
+{
+  "id": "loan-1111-aaaa-bbbb-cccc",
+  "userId": "user-123",
+  "itemId": "item-1111-2222-3333-4444",
+  "status": {
+    "name": "Open"
+  },
+  "loanDate": "2024-12-01T10:00:00.000Z",
+  "dueDate": "2024-12-15T23:59:59.000Z",
+  "renewalCount": 0,
+  "item": {
+    "barcode": "ITEM001",
+    "title": "The Great Gatsby",
+    "callNumber": "F128 .18 W63"
+  },
+  "metadata": {
+    "createdDate": "2024-12-01T10:00:00.000Z"
+  }
+}

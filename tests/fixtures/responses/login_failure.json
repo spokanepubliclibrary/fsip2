@@ -1,0 +1,10 @@
+{
+  "errors": [
+    {
+      "message": "Invalid credentials",
+      "type": "error",
+      "code": "INVALID_CREDENTIALS",
+      "parameters": []
+    }
+  ]
+}

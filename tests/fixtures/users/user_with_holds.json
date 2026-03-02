@@ -1,0 +1,15 @@
+{
+  "id": "5534567-89ab-cdef-0123-456789abcdef",
+  "username": "holduser",
+  "barcode": "33333333333333",
+  "active": true,
+  "type": "patron",
+  "patronGroup": "adults",
+  "personal": {
+    "lastName": "Holder",
+    "firstName": "Request",
+    "email": "holds@example.com"
+  },
+  "enrollmentDate": "2024-01-01T00:00:00.000Z",
+  "expirationDate": "2026-12-31T23:59:59.000Z"
+}

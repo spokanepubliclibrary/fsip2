@@ -1,0 +1,15 @@
+{
+  "id": "2234567-89ab-cdef-0123-456789abcdef",
+  "username": "expired",
+  "barcode": "98765432109876",
+  "active": true,
+  "type": "patron",
+  "patronGroup": "adults",
+  "personal": {
+    "lastName": "Expired",
+    "firstName": "User",
+    "email": "expired@example.com"
+  },
+  "enrollmentDate": "2019-01-01T00:00:00.000Z",
+  "expirationDate": "2024-01-01T00:00:00.000Z"
+}

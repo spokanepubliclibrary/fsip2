@@ -1,0 +1,15 @@
+{
+  "id": "4434567-89ab-cdef-0123-456789abcdef",
+  "username": "debtor",
+  "barcode": "22222222222222",
+  "active": true,
+  "type": "patron",
+  "patronGroup": "adults",
+  "personal": {
+    "lastName": "Owes",
+    "firstName": "Money",
+    "email": "owesmoney@example.com"
+  },
+  "enrollmentDate": "2023-06-01T00:00:00.000Z",
+  "expirationDate": "2026-12-31T23:59:59.000Z"
+}

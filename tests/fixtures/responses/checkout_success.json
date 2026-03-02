@@ -1,0 +1,23 @@
+{
+  "id": "loan-new-1111-aaaa-bbbb",
+  "userId": "1234567-89ab-cdef-0123-456789abcdef",
+  "itemId": "item-1111-2222-3333-4444",
+  "status": {
+    "name": "Open"
+  },
+  "loanDate": "2024-12-05T10:30:00.000Z",
+  "dueDate": "2024-12-19T23:59:59.000Z",
+  "renewalCount": 0,
+  "action": "checkedout",
+  "item": {
+    "barcode": "ITEM-001",
+    "title": "The Catcher in the Rye",
+    "callNumber": "PS3568.O243 D6 2010",
+    "materialType": {
+      "name": "Book"
+    }
+  },
+  "metadata": {
+    "createdDate": "2024-12-05T10:30:00.000Z"
+  }
+}

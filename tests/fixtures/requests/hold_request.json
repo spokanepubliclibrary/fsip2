@@ -1,0 +1,24 @@
+{
+  "id": "req-1111-aaaa-bbbb-cccc",
+  "requestType": "Hold",
+  "requestDate": "2024-12-01T09:00:00.000Z",
+  "requesterId": "5534567-89ab-cdef-0123-456789abcdef",
+  "itemId": "item-3333-4444-5555-6666",
+  "instanceId": "inst-1111-2222-3333",
+  "holdingsRecordId": "holdings-3333-4444-5555",
+  "pickupServicePointId": "sp-main",
+  "status": "Open - Not yet filled",
+  "position": 1,
+  "item": {
+    "barcode": "ITEM-003",
+    "title": "Popular Book on Hold"
+  },
+  "requester": {
+    "barcode": "33333333333333",
+    "firstName": "Request",
+    "lastName": "Holder"
+  },
+  "metadata": {
+    "createdDate": "2024-12-01T09:00:00.000Z"
+  }
+}

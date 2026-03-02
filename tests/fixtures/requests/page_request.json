@@ -1,0 +1,24 @@
+{
+  "id": "req-3333-cccc-dddd-eeee",
+  "requestType": "Page",
+  "requestDate": "2024-12-04T11:00:00.000Z",
+  "requesterId": "5534567-89ab-cdef-0123-456789abcdef",
+  "itemId": "item-9999-0000-1111-2222",
+  "instanceId": "inst-3333-4444-5555",
+  "holdingsRecordId": "holdings-6666-7777-8888",
+  "pickupServicePointId": "sp-reference",
+  "status": "Open - In transit",
+  "position": 1,
+  "item": {
+    "barcode": "ITEM-PAGE",
+    "title": "Reference Book"
+  },
+  "requester": {
+    "barcode": "33333333333333",
+    "firstName": "Request",
+    "lastName": "Holder"
+  },
+  "metadata": {
+    "createdDate": "2024-12-04T11:00:00.000Z"
+  }
+}

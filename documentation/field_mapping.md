@@ -100,6 +100,20 @@ supportedMessages:
 5. Determine routing location from pickup service point or in-transit destination
 6. Build response with all fields
 
+
+### Example Sorting Rules (Automated Material Handlers)
+
+Most Automated Material Handlers (AMH) work with top-down rules. Here is an example of how sorting rules can be applied to item checkin responses.
+| Code/Field | Rule | Sort to | Logic |
+|------|-------------|-------|-----|
+| CV | = 01 | Bin 1 (local holds) | Hold exists for this branch |
+| CT | != 'Local Service Point' | Bin 5 (exceptions) | Item is in-transit to somewhere else |
+| CH | = 'New DVDs' | Bin 2 | New DVD material type routes to bin 2 |
+| CH | = 'Adult Fiction' | Bin 3 | Adult Fiction material type routes to bin 3 |
+| CS | = '398.2%' | Bin 4 | Call No. Materials with **398.2 Anything** route to bin 4 |
+|  | | Bin 5 (exceptions) | Intentionally left blank, with no previous matching rules, route to bin 5 |
+
+
 ### Special Handling
 
 - **Claimed Returned Items**: Configurable resolution (`claimedReturnedResolution`):
@@ -176,7 +190,7 @@ Item Information (17/18) provides detailed information about library items. This
 1. **Item-Level Lookup**: Using item barcode (standard SIP2 usage)
 2. **Instance-Level Lookup**: Using FOLIO instance UUID (bibliographic record only)
 
-The system automatically detects the lookup mode based on the AB field format.
+The system automatically detects the lookup mode based on the AB field format making it possible to support "unfilled holds" in the [63/64 - Patron Information Response](#message-6364---patron-information)
 
 ### Request Fields (17)
 
@@ -676,7 +690,7 @@ Each position is 'Y' (true) or ' ' (space, false):
 | Print Line | AG | No | Print messages | Not implemented |
 
 ### Additional details about fee/fine messages
-See [fee_fines.md](fee_fines.md) for additional reference. 
+See [documentation/fee_fines.md](documentation/fee_fines.md) for additional reference. 
 
 ### Configuration Options
 
@@ -778,7 +792,7 @@ Each position controls inclusion of detail fields (Y/N):
 
 
 ### Additional details about fee/fine messages
-See [fee_fines.md](fee_fines.md) for additional reference. 
+See [documentation/fee_fines.md](documentation/fee_fines.md) for additional reference. 
 
 ### Custom Fields (SA-SZ)
 

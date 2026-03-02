@@ -1,0 +1,25 @@
+{
+  "id": "req-2222-bbbb-cccc-dddd",
+  "requestType": "Recall",
+  "requestDate": "2024-11-25T14:30:00.000Z",
+  "requesterId": "5534567-89ab-cdef-0123-456789abcdef",
+  "itemId": "item-8888-9999-0000-1111",
+  "instanceId": "inst-2222-3333-4444",
+  "holdingsRecordId": "holdings-5555-6666-7777",
+  "pickupServicePointId": "sp-main",
+  "status": "Open - Awaiting pickup",
+  "position": 1,
+  "item": {
+    "barcode": "ITEM-RECALLED",
+    "title": "Recalled Book"
+  },
+  "requester": {
+    "barcode": "33333333333333",
+    "firstName": "Request",
+    "lastName": "Holder"
+  },
+  "metadata": {
+    "createdDate": "2024-11-25T14:30:00.000Z",
+    "updatedDate": "2024-12-02T10:15:00.000Z"
+  }
+}

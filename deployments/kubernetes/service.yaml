@@ -1,0 +1,100 @@
+---
+# Service for internal cluster access (ClusterIP)
+apiVersion: v1
+kind: Service
+metadata:
+  name: fsip2
+  namespace: fsip2
+  labels:
+    app.kubernetes.io/name: fsip2
+    app.kubernetes.io/component: sip2-server
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fsip2
+    app.kubernetes.io/component: sip2-server
+  ports:
+  - name: sip2
+    port: 6443
+    targetPort: sip2
+    protocol: TCP
+  - name: http-metrics
+    port: 8081
+    targetPort: http-metrics
+    protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800  # 3 hours
+
+---
+# Service for external access (LoadBalancer)
+# Uncomment and configure for external SIP2 access
+apiVersion: v1
+kind: Service
+metadata:
+  name: fsip2-external
+  namespace: fsip2
+  labels:
+    app.kubernetes.io/name: fsip2
+    app.kubernetes.io/component: sip2-server
+  annotations:
+    # Add cloud provider specific annotations here
+    # For AWS:
+    # service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    # service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+
+    # For Azure:
+    # service.beta.kubernetes.io/azure-load-balancer-internal: "false"
+
+    # For GCP:
+    # cloud.google.com/load-balancer-type: "External"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: fsip2
+    app.kubernetes.io/component: sip2-server
+  ports:
+  - name: sip2
+    port: 6443
+    targetPort: sip2
+    protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800  # 3 hours
+
+  # Optional: Specify external traffic policy
+  externalTrafficPolicy: Local
+
+  # Optional: Specify load balancer source ranges (whitelist)
+  # loadBalancerSourceRanges:
+  # - 10.0.0.0/8
+  # - 172.16.0.0/12
+  # - 192.168.0.0/16
+
+---
+# Headless service for StatefulSet (if needed for direct pod access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: fsip2-headless
+  namespace: fsip2
+  labels:
+    app.kubernetes.io/name: fsip2
+    app.kubernetes.io/component: sip2-server
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: fsip2
+    app.kubernetes.io/component: sip2-server
+  ports:
+  - name: sip2
+    port: 6443
+    targetPort: sip2
+    protocol: TCP
+  - name: http-metrics
+    port: 8081
+    targetPort: http-metrics
+    protocol: TCP

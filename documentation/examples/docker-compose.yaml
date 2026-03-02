@@ -1,4 +1,4 @@
-# Edge-SIP2 Docker Compose Example
+# FSIP2 Docker Compose Example
 #
 # Usage:
 #   docker-compose up -d          # Start in background
@@ -13,7 +13,7 @@
 version: '3.8'
 
 services:
-  edge-sip2:
+  fsip2:
     # Build from local Dockerfile (uncomment to build locally)
     # build:
     #   context: ../..
@@ -24,9 +24,9 @@ services:
     #     GIT_COMMIT: "${GIT_COMMIT:-unknown}"
 
     # Use pre-built image (comment out if building locally)
-    image: edge-sip2:latest
+    image: fsip2:latest
 
-    container_name: edge-sip2
+    container_name: fsip2
 
     # Restart policy
     restart: unless-stopped
@@ -41,14 +41,15 @@ services:
     # Volume mounts
     volumes:
       # Configuration files (read-only for security)
-      - ./basic.yaml:/etc/edge-sip2/config.yaml:ro
-      - ./tenant-config.yaml:/etc/edge-sip2/tenant-config.yaml:ro
+      - ./basic.yaml:/etc/fsip2/config.yaml:ro
+      - ./tenant-config.yaml:/etc/fsip2/tenant-config.yaml:ro
 
       # Log directory (for persistent logging)
+      # Use a named volume instead or chown 1001:1001 to host folder on create.
       - ../../log:/app/log
 
       # TLS certificates (uncomment if using TLS)
-      # - ./certs:/etc/edge-sip2/certs:ro
+      # - ./certs:/etc/fsip2/certs:ro
 
     # Health check configuration
     healthcheck:
@@ -83,35 +84,35 @@ services:
 networks:
   sip2-network:
     driver: bridge
-    name: edge-sip2-network
+    name: fsip2-network
 
 # Example with multiple configurations:
 #
 # services:
-#   edge-sip2-prod:
-#     image: edge-sip2:latest
-#     container_name: edge-sip2-prod
+#   fsip2-prod:
+#     image: fsip2:latest
+#     container_name: fsip2-prod
 #     ports:
 #       - "6443:6443"
 #       - "8081:8081"
 #     volumes:
-#       - ./production/config.yaml:/etc/edge-sip2/config.yaml:ro
-#       - ./production/tenant-config.yaml:/etc/edge-sip2/tenant-config.yaml:ro
-#       - /var/log/edge-sip2:/app/log
+#       - ./production/config.yaml:/etc/fsip2/config.yaml:ro
+#       - ./production/tenant-config.yaml:/etc/fsip2/tenant-config.yaml:ro
+#       - /var/log/fsip2:/app/log
 #     restart: always
 #     networks:
 #       - sip2-network
 #
-#   edge-sip2-staging:
-#     image: edge-sip2:latest
-#     container_name: edge-sip2-staging
+#   fsip2-staging:
+#     image: fsip2:latest
+#     container_name: fsip2-staging
 #     ports:
 #       - "6444:6443"
 #       - "8082:8081"
 #     volumes:
-#       - ./staging/config.yaml:/etc/edge-sip2/config.yaml:ro
-#       - ./staging/tenant-config.yaml:/etc/edge-sip2/tenant-config.yaml:ro
-#       - /var/log/edge-sip2-staging:/app/log
+#       - ./staging/config.yaml:/etc/fsip2/config.yaml:ro
+#       - ./staging/tenant-config.yaml:/etc/fsip2/tenant-config.yaml:ro
+#       - /var/log/fsip2-staging:/app/log
 #     restart: unless-stopped
 #     networks:
 #       - sip2-network

@@ -1,0 +1,18 @@
+{
+  "id": "3334567-89ab-cdef-0123-456789abcdef",
+  "username": "blocked",
+  "barcode": "11111111111111",
+  "active": true,
+  "type": "patron",
+  "patronGroup": "adults",
+  "personal": {
+    "lastName": "Blocked",
+    "firstName": "User",
+    "email": "blocked@example.com"
+  },
+  "enrollmentDate": "2023-01-01T00:00:00.000Z",
+  "expirationDate": "2026-12-31T23:59:59.000Z",
+  "metadata": {
+    "createdDate": "2023-01-01T12:00:00.000Z"
+  }
+}

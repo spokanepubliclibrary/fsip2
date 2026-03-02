@@ -1,17 +1,16 @@
-# FOLIO SIP2 (FSIP2) - the Edge-SIP2 Go implementation
+# FSIP2 (Go Implementation)
 
 [![Go Version](https://img.shields.io/badge/go-1.23-blue.svg)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-A high-performance Go implementation of the SIP2 (Standard Interchange Protocol) server for FOLIO library management systems.
+A high-performance, comprehensive, flexible and customizable Go implementation of the SIP2 (Standard Interchange Protocol) server for FOLIO library management systems.
 
 **Inspired by:** [folio-org/edge-sip2](https://github.com/folio-org/edge-sip2)
 **Version:** 1.0.0
 
-
 ## Overview
 
-Edge-SIP2 is a bridge application that connects self-service library kiosks with the FOLIO library management system using the SIP2 protocol. This Go implementation provides:
+FSIP2 is a bridge application that connects self-service library kiosks with the FOLIO library management system using the SIP2 protocol. This Go implementation provides:
 
 - Full SIP2 protocol support (13 message types)
 - Multi-tenant configuration
@@ -19,6 +18,25 @@ Edge-SIP2 is a bridge application that connects self-service library kiosks with
 - Configurable logging with PIN obfuscation
 - Prometheus metrics
 - Docker and Kubernetes deployment support
+
+## Recent Improvements
+
+### Security & Reliability Enhancements
+- **Token Expiration Validation**: Automatic detection and refresh of expired FOLIO authentication tokens with 90-second safety buffer
+- **Session Token Tracking**: Enhanced session management with token expiration timestamps
+- **Improved Error Handling**: Better handling of authentication failures and token refresh scenarios
+
+### Testing & Code Quality
+- **Comprehensive Test Suite**: 86.9% overall coverage with most packages exceeding 85%
+- **Test Separation**: Unit, integration, and E2E tests properly organized with build tags
+- **100% Coverage Packages**: Cache, metrics, helpers, localization, types, customfields fully tested
+- **Mock Infrastructure**: Complete mock FOLIO API for integration testing
+
+### Configuration & Deployment
+- **Multi-Source Configuration**: Support for file, HTTP, and S3-based configuration
+- **Docker Optimization**: Alpine-based images with non-root user and minimal footprint
+- **Kubernetes Ready**: Production-ready manifests with health probes and auto-scaling
+- **Hot-Reload Support**: Configuration updates on service restart
 
 ## Features
 
@@ -32,7 +50,7 @@ Edge-SIP2 is a bridge application that connects self-service library kiosks with
 - ✅ Renew All (65/66)
 - ✅ End Patron Session (35/36)
 - ✅ Fee Paid (37/38)
-- ❌ Item Status Update (19/20)
+- ⚠️ Item Status Update (19/20) - Planned/Partial
 - ✅ Login (93/94)
 - ✅ SC/ACS Status (99/98)
 - ✅ Resend (97/96)
@@ -40,11 +58,12 @@ Edge-SIP2 is a bridge application that connects self-service library kiosks with
 See See [documentation/field_mapping.md](documentation/field_mapping.md) for comprehensive list of supported fields, configuration details, and data sources.
 
 
-### Confirmed 100% Vendor Support (compared to Edge-SIP2)
+### Confirmed 100% Vendor Support (compared to folio-org/edge-sip2)
 - Envisionware (Full suite) ✅
 - Comprise (Terminals, SAM, SmartPay, SmartAlec) ✅
 - MK Solutions (Full suite) ✅
 - Illion (TalkingTech) iTiva Connect ✅
+
 
 ### Configuration
 - YAML-based configuration
@@ -62,7 +81,8 @@ See See [documentation/field_mapping.md](documentation/field_mapping.md) for com
 
 ### Security
 - TLS/SSL support
-- Token-based authentication with caching
+- Token-based authentication with caching and automatic expiration validation
+- Automatic token refresh for expired credentials
 - PIN/password obfuscation in logs
 
 
@@ -91,6 +111,7 @@ All permission required for fsip2:
     usergroups.item.get
     usergroups.collection.get
     inventory-storage.holdings.item.get
+    inventory-storage.service-points.item.get
     inventory.instances.item.get
     feefines.collection.get
     patron-pin.validate
@@ -148,7 +169,7 @@ See [documentation/examples/](documentation/examples/) for complete configuratio
 
 ```bash
 # Run with configuration file
-./bin/edge-sip2 -config config.yaml
+./bin/fsip2 -config config.yaml
 
 # Or using make
 make run
@@ -207,9 +228,9 @@ docker build \
   --build-arg VERSION=1.0.0 \
   --build-arg BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
   --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
-  -t edge-sip2:1.0.0 .
+  -t fsip2:1.0.0 .
 
-docker tag edge-sip2:1.0.0 edge-sip2:latest
+docker tag fsip2:1.0.0 fsip2:latest
 ```
 
 ### Running with Docker
@@ -221,41 +242,41 @@ make docker-run
 
 # Manual run
 docker run -d \
-  --name edge-sip2 \
+  --name fsip2 \
   -p 6443:6443 \
   -p 8081:8081 \
-  -v $(pwd)/documentation/examples/basic.yaml:/etc/edge-sip2/config.yaml:ro \
-  -v $(pwd)/documentation/examples/tenant-config.yaml:/etc/edge-sip2/tenant-config.yaml:ro \
+  -v $(pwd)/documentation/examples/basic.yaml:/etc/fsip2/config.yaml:ro \
+  -v $(pwd)/documentation/examples/tenant-config.yaml:/etc/fsip2/tenant-config.yaml:ro \
   -v $(pwd)/log:/app/log \
-  edge-sip2:latest
+  fsip2:latest
 ```
 
 **Production run with custom configs:**
 ```bash
 docker run -d \
-  --name edge-sip2 \
+  --name fsip2 \
   --restart unless-stopped \
   -p 6443:6443 \
   -p 8081:8081 \
-  -v /etc/edge-sip2/config.yaml:/etc/edge-sip2/config.yaml:ro \
-  -v /etc/edge-sip2/tenant-config.yaml:/etc/edge-sip2/tenant-config.yaml:ro \
-  -v /var/log/edge-sip2:/app/log \
+  -v /etc/fsip2/config.yaml:/etc/fsip2/config.yaml:ro \
+  -v /etc/fsip2/tenant-config.yaml:/etc/fsip2/tenant-config.yaml:ro \
+  -v /var/log/fsip2:/app/log \
   --memory=512m \
   --cpus=2 \
-  edge-sip2:latest
+  fsip2:latest
 ```
 
 **With TLS enabled:**
 ```bash
 docker run -d \
-  --name edge-sip2 \
+  --name fsip2 \
   -p 6443:6443 \
   -p 8081:8081 \
-  -v $(pwd)/config.yaml:/etc/edge-sip2/config.yaml:ro \
-  -v $(pwd)/tenant-config.yaml:/etc/edge-sip2/tenant-config.yaml:ro \
-  -v $(pwd)/certs:/etc/edge-sip2/certs:ro \
+  -v $(pwd)/config.yaml:/etc/fsip2/config.yaml:ro \
+  -v $(pwd)/tenant-config.yaml:/etc/fsip2/tenant-config.yaml:ro \
+  -v $(pwd)/certs:/etc/fsip2/certs:ro \
   -v $(pwd)/log:/app/log \
-  edge-sip2:latest
+  fsip2:latest
 ```
 
 ### Using Docker Compose
@@ -283,19 +304,19 @@ docker-compose down
 | Property | Value |
 |----------|-------|
 | Base Image | alpine:3.19 |
-| User | edge-sip2 (non-root, UID 1001) |
+| User | fsip2 (non-root, UID 1001) |
 | Working Directory | /app |
-| Config Directory | /etc/edge-sip2 |
+| Config Directory | /etc/fsip2 |
 | Exposed Ports | 6443 (SIP2), 8081 (HTTP) |
 
 ### Volume Mounts
 
 | Mount Point | Purpose | Required |
 |-------------|---------|----------|
-| /etc/edge-sip2/config.yaml | Bootstrap configuration | Yes |
-| /etc/edge-sip2/tenant-config.yaml | Tenant configuration | Yes* |
+| /etc/fsip2/config.yaml | Bootstrap configuration | Yes |
+| /etc/fsip2/tenant-config.yaml | Tenant configuration | Yes* |
 | /app/log | Log files | No |
-| /etc/edge-sip2/certs | TLS certificates | No |
+| /etc/fsip2/certs | TLS certificates | No |
 
 *Required if using file-based tenant configuration
 
@@ -318,10 +339,10 @@ curl http://localhost:8081/metrics
 telnet localhost 6443
 
 # View container logs
-docker logs edge-sip2
+docker logs fsip2
 
 # Execute shell in container
-docker exec -it edge-sip2 /bin/sh
+docker exec -it fsip2 /bin/sh
 ```
 
 ### Testing the Docker Build
@@ -333,24 +354,24 @@ Before deploying to production, test the Docker build process:
 make docker
 
 # Test 2: Verify images were created
-docker images | grep edge-sip2
+docker images | grep fsip2
 
 # Test 3: Check image size (should be < 50MB)
-docker images edge-sip2:latest --format "{{.Size}}"
+docker images fsip2:latest --format "{{.Size}}"
 
 # Test 4: Inspect image metadata
-docker inspect edge-sip2:latest
+docker inspect fsip2:latest
 
 # Test 5: Verify binary version
-docker run --rm edge-sip2:latest /app/edge-sip2 -version
+docker run --rm fsip2:latest /app/fsip2 -version
 
 # Test 6: Check user permissions (should be non-root)
-docker run --rm edge-sip2:latest id
-# Expected: uid=1001(edge-sip2) gid=1001(edge-sip2)
+docker run --rm fsip2:latest id
+# Expected: uid=1001(fsip2) gid=1001(fsip2)
 
 # Test 7: Verify directory structure
-docker run --rm edge-sip2:latest ls -la /app
-docker run --rm edge-sip2:latest ls -la /etc/edge-sip2
+docker run --rm fsip2:latest ls -la /app
+docker run --rm fsip2:latest ls -la /etc/fsip2
 ```
 
 **Troubleshooting Build Issues:**
@@ -363,7 +384,7 @@ If the build fails, check:
 
 ## Kubernetes Deployment
 
-Edge-SIP2 can be deployed to Kubernetes with production-ready manifests including health probes, resource limits, and auto-scaling support.
+FSIP2 can be deployed to Kubernetes with production-ready manifests including health probes, resource limits, and auto-scaling support.
 
 ### Quick Start
 
@@ -375,18 +396,18 @@ kubectl apply -f deployments/kubernetes/
 kubectl apply -k deployments/kubernetes/
 
 # Check deployment status
-kubectl get pods -n edge-sip2
-kubectl get svc -n edge-sip2
+kubectl get pods -n fsip2
+kubectl get svc -n fsip2
 
 # View logs
-kubectl logs -n edge-sip2 -l app.kubernetes.io/name=edge-sip2
+kubectl logs -n fsip2 -l app.kubernetes.io/name=fsip2
 ```
 
 ### What's Included
 
 The Kubernetes deployment provides:
 
-- **Namespace**: Isolated `edge-sip2` namespace
+- **Namespace**: Isolated `fsip2` namespace
 - **Deployment**: 2 replicas with rolling updates, health probes, resource limits
 - **Services**: ClusterIP (internal), LoadBalancer (external), and headless services
 - **ConfigMap**: Application and tenant configuration
@@ -400,26 +421,26 @@ Edit the ConfigMap to configure your deployment:
 
 ```bash
 # Edit configuration
-kubectl edit configmap edge-sip2-config -n edge-sip2
+kubectl edit configmap fsip2-config -n fsip2
 
 # Update Okapi URL, tenant settings, etc.
 
 # Restart pods to apply changes
-kubectl rollout restart deployment/edge-sip2 -n edge-sip2
+kubectl rollout restart deployment/fsip2 -n fsip2
 ```
 
 ### Accessing the Service
 
 **Internal Access (from within cluster):**
 ```
-SIP2: edge-sip2.edge-sip2.svc.cluster.local:6443
-Metrics: edge-sip2.edge-sip2.svc.cluster.local:8081
+SIP2: fsip2.fsip2.svc.cluster.local:6443
+Metrics: fsip2.fsip2.svc.cluster.local:8081
 ```
 
 **External Access (LoadBalancer):**
 ```bash
 # Get external IP
-kubectl get svc edge-sip2-external -n edge-sip2
+kubectl get svc fsip2-external -n fsip2
 
 # Connect to SIP2
 telnet <EXTERNAL-IP> 6443
@@ -429,10 +450,10 @@ telnet <EXTERNAL-IP> 6443
 
 ```bash
 # Manual scaling
-kubectl scale deployment edge-sip2 -n edge-sip2 --replicas=5
+kubectl scale deployment fsip2 -n fsip2 --replicas=5
 
 # Auto-scaling (HPA)
-kubectl autoscale deployment edge-sip2 -n edge-sip2 \
+kubectl autoscale deployment fsip2 -n fsip2 \
   --cpu-percent=70 --min=2 --max=10
 ```
 
@@ -440,41 +461,116 @@ kubectl autoscale deployment edge-sip2 -n edge-sip2 \
 
 ```bash
 # Check health
-kubectl port-forward -n edge-sip2 svc/edge-sip2 8081:8081
+kubectl port-forward -n fsip2 svc/fsip2 8081:8081
 curl http://localhost:8081/admin/health
 
 # View metrics
 curl http://localhost:8081/metrics
 
 # View logs
-kubectl logs -n edge-sip2 -l app.kubernetes.io/name=edge-sip2 -f
+kubectl logs -n fsip2 -l app.kubernetes.io/name=fsip2 -f
 ```
 
 For detailed Kubernetes deployment instructions, see [deployments/kubernetes/README.md](deployments/kubernetes/README.md).
 
 ## Testing
 
+FSIP2 has a comprehensive test suite with multiple testing layers to ensure reliability and correctness.
+
+### Test Coverage
+
+**Current Coverage: 86.9%**
+
+**Package-Level Coverage:**
+- `internal/cache`: 100.0% - Full coverage of token caching
+- `internal/helpers`: 100.0% - Helper utilities
+- `internal/localization`: 100.0% - Localization support
+- `internal/metrics`: 100.0% - Complete metrics instrumentation
+- `internal/sip2/customfields`: 100.0% - Custom field handling
+- `internal/types`: 100.0% - Session and type definitions
+- `internal/sip2/protocol`: 98.1% - Protocol primitives (charset, datetime, delimiters)
+- `internal/folio/models`: 97.3% - FOLIO API data models
+- `internal/sip2/mediatype`: 96.2% - Media type mapping
+- `internal/health`: 90.9% - Health check endpoints
+- `internal/logging`: 91.5% - Comprehensive logging tests
+- `internal/renewal`: 89.5% - Rolling renewal logic
+- `internal/sip2/builder`: 88.0% - SIP2 message building
+- `internal/folio`: 88.2% - FOLIO API integration
+- `internal/server`: 87.7% - Server and connection handling
+- `internal/config`: 87.1% - Configuration management
+- `internal/sip2/parser`: 86.6% - SIP2 message parsing
+- `internal/tenant`: 87.8% - Multi-tenant resolution
+- `internal/handlers`: 84.1% - Message handlers
+
+### Test Types
+
+**Unit Tests** - Fast, isolated component tests:
 ```bash
-# Run unit tests
 make test-unit
-
-# Run integration tests
-make test-integration
-
-# Run e2e tests
-make test-e2e
-
-# Generate coverage report
-make test-coverage
 ```
+
+**Integration Tests** - Tests with mock FOLIO API:
+```bash
+make test-integration
+```
+
+**End-to-End Tests** - Full SIP2 protocol flow tests:
+```bash
+make test-e2e
+```
+
+**All Tests** - Run unit, integration, and E2E together:
+```bash
+make test-all
+```
+
+**Coverage Report** - Generate HTML coverage report:
+```bash
+make test-coverage
+# Opens coverage.html in browser
+```
+
+### Test Organization
+
+```
+fsip2/
+├── internal/                    # Unit tests co-located with source
+│   ├── cache/                   # *_test.go alongside source files
+│   ├── handlers/                # Handler tests with mock helpers
+│   └── ...
+└── tests/
+    ├── e2e/                     # End-to-end SIP2 protocol flow tests
+    ├── integration/             # Integration tests with mock FOLIO server
+    ├── mocks/                   # Mock FOLIO API server
+    ├── fixtures/                # JSON test fixtures (users, items, loans, etc.)
+    └── testutil/                # Shared test utilities
+```
+
+Tests are organized using Go build tags:
+- Unit tests: No build tags required (run with `make test-unit`)
+- Integration tests: `//go:build integration` (run with `make test-integration`)
+- E2E tests: `//go:build e2e` (run with `make test-e2e`)
+
+This separation ensures fast feedback during development while maintaining comprehensive test coverage.
+
+### Key Features Tested
+
+- **Token Expiration & Refresh**: Automatic detection and refresh of expired FOLIO authentication tokens
+- **Multi-Tenant Resolution**: IP-based, port-based, and username-prefix tenant routing
+- **SIP2 Protocol**: All 13 message types with field validation
+- **FOLIO Integration**: API client with retry logic and error handling
+- **Configuration**: Hot-reload, multi-source config loading (file, HTTP, S3)
+- **Rolling Renewals**: Automatic patron expiration extension
+- **Metrics & Monitoring**: Prometheus metrics and health endpoints
+- **TLS/Connection Handling**: Secure connection setup and lifecycle management
 
 ## Development
 
 ### Project Structure
 
 ```
-edge-sip2/
-├── cmd/edge-sip2/           # Main application
+fsip2/
+├── cmd/fsip2/               # Main application
 ├── internal/                # Private application code
 │   ├── config/              # Configuration management
 │   ├── sip2/                # SIP2 protocol
@@ -498,7 +594,19 @@ make clean              # Clean build artifacts
 
 ### Code Style
 
+This project follows standard Go conventions:
 
+- **Formatting**: `gofmt` and `go vet` (run via `make lint`)
+- **Naming**: PascalCase for exported identifiers, camelCase for unexported; constructors use `NewXxx()` pattern; method receivers use short variable names
+- **Error handling**: Wrap errors with context using `fmt.Errorf("...: %w", err)`
+- **Documentation**: Package-level `doc.go` files; exported functions commented starting with the function name
+- **Imports**: Standard library, then third-party, separated by blank lines
+- **Tests**: Table-driven tests with `testify`; integration and E2E tests separated by build tags (`integration`, `e2e`)
+
+Run formatting and vet checks:
+```bash
+make lint
+```
 
 ## Monitoring
 
@@ -515,10 +623,33 @@ curl http://localhost:8081/metrics
 ```
 
 Available metrics:
-- `edge_sip2_command_duration_seconds` - Command processing duration
-- `edge_sip2_invalid_message_errors_total` - Invalid message count
-- `edge_sip2_request_errors_total` - Request error count
-- `edge_sip2_response_errors_total` - Response error count
+- `fsip2_connections_total` - Total SIP2 connections established
+- `fsip2_connections_active` - Current active SIP2 connections
+- `fsip2_connection_duration_seconds` - Duration of SIP2 connections
+- `fsip2_connection_errors_total` - Total SIP2 connection errors
+- `fsip2_messages_total` - Total SIP2 messages by type and tenant
+- `fsip2_message_duration_seconds` - SIP2 message processing duration
+- `fsip2_message_errors_total` - Total SIP2 message errors by type
+- `fsip2_login_attempts_total` - Total login attempts
+- `fsip2_login_success_total` - Total successful logins
+- `fsip2_login_failures_total` - Total failed logins
+- `fsip2_checkout_total` - Total checkout requests
+- `fsip2_checkout_success_total` - Total successful checkouts
+- `fsip2_checkout_failures_total` - Total failed checkouts
+- `fsip2_checkin_total` - Total checkin requests
+- `fsip2_checkin_success_total` - Total successful checkins
+- `fsip2_checkin_failures_total` - Total failed checkins
+- `fsip2_renew_total` - Total renewal requests
+- `fsip2_renew_success_total` - Total successful renewals
+- `fsip2_renew_failures_total` - Total failed renewals
+- `fsip2_tenant_resolutions_total` - Total tenant resolutions by phase and resolver
+- `fsip2_tenant_resolution_errors_total` - Total tenant resolution errors
+- `fsip2_sessions_created_total` - Total SIP2 sessions created
+- `fsip2_sessions_ended_total` - Total SIP2 sessions ended
+- `fsip2_sessions_active` - Current active SIP2 sessions
+- `folio_requests_total` - Total FOLIO API requests by endpoint
+- `folio_request_duration_seconds` - FOLIO API request duration
+- `folio_request_errors_total` - Total FOLIO API errors by endpoint
 
 ## Configuration Reference
 
@@ -528,6 +659,7 @@ Available metrics:
 - `okapiUrl`: FOLIO Okapi base URL
 - `healthCheckPort`: Health check HTTP port (default: 8081)
 - `tokenCacheCapacity`: Maximum cached tokens (default: 100)
+- `tokenCacheTTL`: Token cache time-to-live with automatic expiration validation
 - `scanPeriod`: Config reload interval in ms (default: 300000)
 
 ### Tenant Configuration
@@ -546,7 +678,7 @@ Available metrics:
   - When false: Returns error if account ID not found
 - `paymentMethod`: Default payment method (default: "Credit card")
   - Common values: "Credit card", "Cash", "Check", "Debit card"
-- `notifyPatron`: Notify patron of payment via email/SMS (default: false)
+- `notifyPatron`: Notify patron of payment via email (MOD-Notice) (default: false)
 
 **Note:** The CP (Location Code) field in login message (93) must contain the UUID of the service point, not a location code string.
 
@@ -597,7 +729,7 @@ See [documentation/configuration.md](documentation/configuration.md) for complet
 
 ## Multi-Tenant Setup
 
-Edge-SIP2 supports multiple tenants resolved by:
+FSIP2 supports multiple tenants resolved by:
 - Client IP address (CIDR ranges)
 - Connection port
 - SIP2 location code

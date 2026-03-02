@@ -1,0 +1,26 @@
+{
+  "id": "item-1111-2222-3333-4444",
+  "barcode": "ITEM001",
+  "status": {
+    "name": "Available"
+  },
+  "materialType": {
+    "id": "mt-001",
+    "name": "Book"
+  },
+  "permanentLoanType": {
+    "id": "lt-001",
+    "name": "Can circulate"
+  },
+  "holdingsRecordId": "holdings-001",
+  "effectiveLocationId": "loc-main-stacks",
+  "effectiveLocation": {
+    "id": "loc-main-stacks",
+    "name": "Main Library - Stacks",
+    "code": "MAIN-STACKS"
+  },
+  "callNumber": "PS3568.O243 D6 2010",
+  "metadata": {
+    "createdDate": "2024-01-01T00:00:00.000Z"
+  }
+}

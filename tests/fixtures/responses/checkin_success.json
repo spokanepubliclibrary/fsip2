@@ -1,0 +1,20 @@
+{
+  "loan": {
+    "id": "loan-1111-aaaa-bbbb-cccc",
+    "userId": "6634567-89ab-cdef-0123-456789abcdef",
+    "itemId": "item-2222-3333-4444-5555",
+    "status": {
+      "name": "Closed"
+    },
+    "loanDate": "2024-12-01T10:00:00.000Z",
+    "returnDate": "2024-12-05T14:30:00.000Z",
+    "action": "checkedin"
+  },
+  "item": {
+    "barcode": "ITEM-002",
+    "title": "The Great Gatsby",
+    "status": {
+      "name": "Available"
+    }
+  }
+}

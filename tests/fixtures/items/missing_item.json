@@ -1,0 +1,26 @@
+{
+  "id": "item-4444-5555-6666-7777",
+  "barcode": "ITEM-004",
+  "status": {
+    "name": "Missing"
+  },
+  "materialType": {
+    "id": "mt-001",
+    "name": "Book"
+  },
+  "permanentLoanType": {
+    "id": "lt-001",
+    "name": "Can circulate"
+  },
+  "holdingsRecordId": "holdings-4444-5555-6666",
+  "effectiveLocationId": "loc-main-stacks",
+  "effectiveLocation": {
+    "id": "loc-main-stacks",
+    "name": "Main Library - Stacks",
+    "code": "MAIN-STACKS"
+  },
+  "callNumber": "PR6056.O93 T5 2003",
+  "metadata": {
+    "createdDate": "2024-01-01T00:00:00.000Z"
+  }
+}

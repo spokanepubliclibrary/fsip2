@@ -1,0 +1,19 @@
+{
+  "id": "loan-2222-bbbb-cccc-dddd",
+  "userId": "6634567-89ab-cdef-0123-456789abcdef",
+  "itemId": "item-5555-6666-7777-8888",
+  "status": {
+    "name": "Open"
+  },
+  "loanDate": "2024-10-01T10:00:00.000Z",
+  "dueDate": "2024-10-15T23:59:59.000Z",
+  "renewalCount": 2,
+  "item": {
+    "barcode": "ITEM-OVERDUE",
+    "title": "Overdue Book",
+    "callNumber": "PS3568 O243"
+  },
+  "metadata": {
+    "createdDate": "2024-10-01T10:00:00.000Z"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "accounts": [
+    {
+      "id": "fee-1111-aaaa-bbbb-cccc",
+      "userId": "4434567-89ab-cdef-0123-456789abcdef",
+      "itemId": "item-2222-3333-4444-5555",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 5.00,
+      "remaining": 5.00,
+      "dateCreated": "2024-11-01T10:00:00.000Z",
+      "dateUpdated": "2024-11-01T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      },
+      "metadata": {
+        "createdDate": "2024-11-01T10:00:00.000Z"
+      }
+    }
+  ],
+  "totalRecords": 1
+}

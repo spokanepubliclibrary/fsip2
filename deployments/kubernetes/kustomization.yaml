@@ -1,0 +1,58 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Namespace to deploy all resources
+namespace: fsip2
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/part-of: fsip2
+
+# Resources to deploy
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  # - secret.yaml  # Uncomment when you have actual secrets
+
+# Images to use (can be overridden with kustomize edit set image)
+images:
+  - name: fsip2
+    newName: fsip2
+    newTag: "1.0.0"
+
+# ConfigMap generator (alternative to configmap.yaml)
+# Uncomment to generate ConfigMap from files
+# configMapGenerator:
+#   - name: fsip2-config
+#     files:
+#       - config.yaml=../../documentation/examples/basic.yaml
+#       - tenant-config.yaml=../../documentation/examples/tenant-config.yaml
+
+# Secret generator (for production use)
+# Uncomment and configure for actual secrets
+# secretGenerator:
+#   - name: fsip2-secret
+#     files:
+#       - tls.crt=path/to/tls.crt
+#       - tls.key=path/to/tls.key
+
+# Replicas (can be overridden with kustomize edit set replicas)
+replicas:
+  - name: fsip2
+    count: 2
+
+# Resource patches for different environments
+# patchesStrategicMerge:
+#   - deployment-patch.yaml
+
+# JSON patches for specific modifications
+# patchesJson6902:
+#   - target:
+#       group: apps
+#       version: v1
+#       kind: Deployment
+#       name: fsip2
+#     path: deployment-patch.json

@@ -1,0 +1,15 @@
+{
+  "errors": [
+    {
+      "message": "Item is not available",
+      "type": "error",
+      "code": "ITEM_NOT_AVAILABLE",
+      "parameters": [
+        {
+          "key": "itemBarcode",
+          "value": "ITEM-UNAVAIL"
+        }
+      ]
+    }
+  ]
+}

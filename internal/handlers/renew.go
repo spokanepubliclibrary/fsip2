@@ -1,0 +1,319 @@
+package handlers
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/spokanepubliclibrary/fsip2/internal/config"
+	"github.com/spokanepubliclibrary/fsip2/internal/folio"
+	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
+	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
+	"github.com/spokanepubliclibrary/fsip2/internal/sip2/protocol"
+	"github.com/spokanepubliclibrary/fsip2/internal/types"
+	"go.uber.org/zap"
+)
+
+// RenewHandler handles SIP2 Renew requests (29)
+type RenewHandler struct {
+	*BaseHandler
+	logger *zap.Logger
+}
+
+// NewRenewHandler creates a new renew handler
+func NewRenewHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *RenewHandler {
+	return &RenewHandler{
+		BaseHandler: NewBaseHandler(logger, tenantConfig),
+		logger:      logger,
+	}
+}
+
+// Handle processes a Renew request (29) and returns a Renew response (30)
+func (h *RenewHandler) Handle(ctx context.Context, msg *parser.Message, session *types.Session) (string, error) {
+	h.logRequest(msg, session)
+
+	// Debug: Log all parsed fields to troubleshoot missing AO
+	h.logger.Debug("Parsed renewal request fields",
+		zap.String("code", string(msg.Code)),
+		zap.Any("all_fields", msg.Fields),
+		zap.Int("field_count", len(msg.Fields)),
+		zap.String("AO_value", msg.GetField(parser.InstitutionID)),
+		zap.String("AA_value", msg.GetField(parser.PatronIdentifier)),
+		zap.String("AB_value", msg.GetField(parser.ItemIdentifier)),
+	)
+
+	// Validate required fields
+	if err := h.validateRequiredFields(msg, map[parser.FieldCode]string{
+		parser.InstitutionID:    "Institution ID",
+		parser.PatronIdentifier: "Patron Identifier",
+		parser.ItemIdentifier:   "Item Identifier",
+	}); err != nil {
+		h.logger.Error("Renew validation failed", zap.Error(err))
+		return h.buildRenewResponseWithError(false, "", "", "", "Renewal failed - invalid request", msg, session.TenantConfig), nil
+	}
+
+	// Extract fields
+	institutionID := msg.GetField(parser.InstitutionID)
+	patronIdentifier := msg.GetField(parser.PatronIdentifier)
+	itemIdentifier := msg.GetField(parser.ItemIdentifier)
+	patronPassword := msg.GetField(parser.PatronPassword)
+
+	h.logger.Info("Renew request",
+		zap.String("institution_id", institutionID),
+		zap.String("patron_identifier", patronIdentifier),
+		zap.String("item_identifier", itemIdentifier),
+	)
+
+	// Get authenticated FOLIO client
+	_, token, err := h.getAuthenticatedFolioClient(ctx, session)
+	if err != nil {
+		h.logger.Error("Failed to get authenticated client", zap.Error(err))
+		return h.buildRenewResponseWithError(false, institutionID, patronIdentifier, itemIdentifier, "Renewal failed - authentication error", msg, session.TenantConfig), nil
+	}
+
+	// Get patron ID and user info (from session or lookup)
+	patronID := session.GetPatronID()
+	var userID string
+
+	// Create patron client for lookup or verification
+	patronClient := h.getPatronClient(session)
+
+	if patronID == "" {
+		// Look up patron by barcode
+		user, err := patronClient.GetUserByBarcode(ctx, token, patronIdentifier)
+		if err != nil {
+			h.logger.Error("Failed to get patron",
+				zap.String("patron_identifier", patronIdentifier),
+				zap.Error(err),
+			)
+			return h.buildRenewResponseWithError(false, institutionID, patronIdentifier, itemIdentifier, GetVerificationErrorMessage(), msg, session.TenantConfig), nil
+		}
+		patronID = user.ID
+		userID = user.ID
+	} else {
+		userID = patronID
+	}
+
+	// Verify patron password/PIN if required
+	verifyResult := VerifyPatronCredentials(
+		ctx,
+		h.logger,
+		session,
+		patronClient,
+		token,
+		userID,
+		patronIdentifier,
+		patronPassword,
+	)
+
+	if verifyResult.Required && !verifyResult.Verified {
+		h.logger.Info("Renewal blocked due to failed patron verification",
+			zap.String("patron_identifier", patronIdentifier),
+		)
+		return h.buildRenewResponseWithError(false, institutionID, patronIdentifier, itemIdentifier, GetVerificationErrorMessage(), msg, session.TenantConfig), nil
+	}
+
+	// Create circulation client
+	circClient := h.getCirculationClient(session)
+
+	// Build renew request
+	renewReq := folio.RenewRequest{
+		ItemBarcode: itemIdentifier,
+		UserBarcode: patronIdentifier,
+	}
+
+	// Perform renewal
+	loan, err := circClient.Renew(ctx, token, renewReq)
+	if err != nil {
+		// Extract detailed error message from FOLIO
+		errorMessage := "Renewal failed"
+		if httpErr, ok := err.(*folio.HTTPError); ok {
+			errorMessage = httpErr.ParseErrorMessage()
+			h.logger.Error("Renewal failed with FOLIO error",
+				zap.String("patron_id", patronID),
+				zap.String("item_identifier", itemIdentifier),
+				zap.String("folio_error", errorMessage),
+				zap.Int("status_code", httpErr.StatusCode),
+			)
+		} else {
+			h.logger.Error("Renewal failed",
+				zap.String("patron_id", patronID),
+				zap.String("item_identifier", itemIdentifier),
+				zap.Error(err),
+			)
+		}
+		return h.buildRenewResponseWithError(false, institutionID, patronIdentifier, itemIdentifier, errorMessage, msg, session.TenantConfig), nil
+	}
+
+	h.logger.Info("Renewal successful",
+		zap.String("patron_id", patronID),
+		zap.String("item_identifier", itemIdentifier),
+		zap.String("loan_id", loan.ID),
+	)
+
+	h.logResponse(string(parser.RenewResponse), session, nil)
+
+	// Parse due date
+	var dueDate time.Time
+	if loan.DueDate != nil {
+		dueDate = *loan.DueDate
+	}
+
+	// Extract instance ID from loan response
+	var instanceID string
+	if loan.Item != nil && loan.Item.InstanceID != "" {
+		instanceID = loan.Item.InstanceID
+		h.logger.Debug("Extracted instance ID from renewal response",
+			zap.String("instance_id", instanceID),
+			zap.String("item_id", loan.ItemID),
+		)
+	} else {
+		// Fallback: try to get instance ID via item lookup
+		h.logger.Warn("Instance ID not found in renewal response, attempting item lookup",
+			zap.String("item_id", loan.ItemID),
+		)
+		inventoryClient := h.getInventoryClient(session)
+		item, err := inventoryClient.GetItemByID(ctx, token, loan.ItemID)
+		if err != nil {
+			h.logger.Error("Failed to lookup item for instance ID",
+				zap.String("item_id", loan.ItemID),
+				zap.Error(err),
+			)
+			// Continue without instance ID - will use fallback in response builder
+		} else if item.InstanceID != "" {
+			instanceID = item.InstanceID
+			h.logger.Debug("Retrieved instance ID from item lookup", zap.String("instance_id", instanceID))
+		} else if item.HoldingsRecordID != "" {
+			// Final fallback: get instance ID from holdings
+			h.logger.Debug("Attempting to get instance ID from holdings", zap.String("holdings_id", item.HoldingsRecordID))
+			holdings, err := inventoryClient.GetHoldingsByID(ctx, token, item.HoldingsRecordID)
+			if err != nil {
+				h.logger.Error("Failed to lookup holdings for instance ID",
+					zap.String("holdings_id", item.HoldingsRecordID),
+					zap.Error(err),
+				)
+			} else {
+				instanceID = holdings.InstanceID
+				h.logger.Debug("Retrieved instance ID from holdings lookup", zap.String("instance_id", instanceID))
+			}
+		}
+	}
+
+	return h.buildRenewResponse(true, institutionID, patronIdentifier, itemIdentifier, dueDate, instanceID, msg, session.TenantConfig), nil
+}
+
+// buildRenewResponseWithError builds a Renew Response with a specific error message
+func (h *RenewHandler) buildRenewResponseWithError(ok bool, institutionID, patronIdentifier, itemIdentifier, errorMessage string, msg *parser.Message, tenantConfig *config.TenantConfig) string {
+	// Debug: Log field delimiter value
+	h.logger.Debug("Building renewal error response",
+		zap.String("field_delimiter", tenantConfig.FieldDelimiter),
+		zap.Int("delimiter_length", len(tenantConfig.FieldDelimiter)),
+	)
+
+	// Create response builder
+	responseBuilder := builder.NewResponseBuilder(tenantConfig)
+
+	// Extract sequence number from request
+	sequenceNumber := msg.SequenceNumber
+	if sequenceNumber == "" {
+		sequenceNumber = "0"
+	}
+
+	// Build response using ResponseBuilder with detailed error message
+	response, err := responseBuilder.BuildRenewResponse(
+		ok,                     // ok
+		false,                  // renewalOK
+		false,                  // magneticMedia
+		false,                  // desensitize
+		time.Now(),             // transactionDate
+		institutionID,          // institutionID
+		patronIdentifier,       // patronID
+		itemIdentifier,         // itemID
+		itemIdentifier,         // titleID (fallback to item barcode on error)
+		time.Time{},            // dueDate (empty on failure)
+		[]string{errorMessage}, // screenMessage (detailed error)
+		[]string{},             // printLine
+		sequenceNumber,         // sequenceNumber
+	)
+
+	if err != nil {
+		h.logger.Error("Failed to build renewal error response", zap.Error(err))
+		// Fallback to basic response
+		return fmt.Sprintf("30NN  %s|AO%s|AA%s|AB%s|AF%s",
+			protocol.FormatSIP2DateTime(time.Now(), "    "),
+			institutionID,
+			patronIdentifier,
+			itemIdentifier,
+			errorMessage,
+		)
+	}
+
+	return response
+}
+
+// buildRenewResponse builds a Renew Response (30) using the ResponseBuilder
+func (h *RenewHandler) buildRenewResponse(ok bool, institutionID, patronIdentifier, itemIdentifier string, dueDate time.Time, instanceID string, msg *parser.Message, tenantConfig *config.TenantConfig) string {
+	// Debug: Log field delimiter value
+	h.logger.Debug("Building renewal response",
+		zap.String("field_delimiter", tenantConfig.FieldDelimiter),
+		zap.Int("delimiter_length", len(tenantConfig.FieldDelimiter)),
+		zap.String("message_delimiter", tenantConfig.MessageDelimiter),
+		zap.Bool("error_detection_enabled", tenantConfig.ErrorDetectionEnabled),
+	)
+
+	// Create response builder
+	responseBuilder := builder.NewResponseBuilder(tenantConfig)
+
+	// Determine screen message based on success/failure
+	var screenMessages []string
+	if ok {
+		screenMessages = []string{"Renewal successful"}
+	} else {
+		screenMessages = []string{"Renewal failed"}
+	}
+
+	// Handle missing instance ID - fallback to item barcode
+	titleID := instanceID
+	if titleID == "" {
+		h.logger.Warn("Instance ID not available for renewal response, using item barcode as fallback",
+			zap.String("item_identifier", itemIdentifier),
+		)
+		titleID = itemIdentifier
+	}
+
+	// Extract sequence number from request
+	sequenceNumber := msg.SequenceNumber
+	if sequenceNumber == "" {
+		sequenceNumber = "0"
+	}
+
+	// Build response using ResponseBuilder (includes AY/AZ if error detection enabled)
+	response, err := responseBuilder.BuildRenewResponse(
+		ok,               // ok
+		ok,               // renewalOK (same as ok for our use case)
+		false,            // magneticMedia (unknown = false)
+		false,            // desensitize (unknown = false)
+		time.Now(),       // transactionDate
+		institutionID,    // institutionID
+		patronIdentifier, // patronID
+		itemIdentifier,   // itemID
+		titleID,          // titleID (Instance UUID or fallback to item barcode)
+		dueDate,          // dueDate
+		screenMessages,   // screenMessage
+		[]string{},       // printLine (empty)
+		sequenceNumber,   // sequenceNumber
+	)
+
+	if err != nil {
+		h.logger.Error("Failed to build renewal response", zap.Error(err))
+		// Fallback to basic response
+		return fmt.Sprintf("30NN  %s|AO%s|AA%s|AB%s|AFRenewal failed - internal error",
+			protocol.FormatSIP2DateTime(time.Now(), "    "),
+			institutionID,
+			patronIdentifier,
+			itemIdentifier,
+		)
+	}
+
+	return response
+}

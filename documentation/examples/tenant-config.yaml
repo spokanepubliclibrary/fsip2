@@ -225,15 +225,16 @@ acceptBulkPayment: false
 # This value is sent to FOLIO when recording payments
 paymentMethod: "Credit card"
 
-# Notify patron via email/SMS in MOD-Patron when payment is recorded
+# Notify patron via email in MOD-Notice when payment is recorded
 # Default: false
 notifyPatron: false
 
 # Circulation Status Mapping
-# Maps FOLIO item status names to SIP2 circulation status codes
-# SIP2 codes: 01=Other, 02=On order, 03=Available, 04=Charged, 05=Charged (no recall),
+# Maps FOLIO item status names to SIP2 circulation status codes (should probably be left along). Useful if FOLIO gets custom item statuses or if you want to change the default mapping. 
+# Standard SIP2 codes: 01=Other, 02=On order, 03=Available, 04=Charged, 05=Charged (no recall),
 #             06=In process, 07=Recalled, 08=Waiting on hold shelf, 09=Waiting to be re-shelved,
 #             10=In transit, 11=Claimed returned, 12=Lost, 13=Missing
+#             '09=Waiting to be re-shelved' future item status "Recently returned". https://folio-org.atlassian.net/browse/UXPROD-3652
 circulationStatusMapping:
   "Available": "03"
   "Checked out": "04"

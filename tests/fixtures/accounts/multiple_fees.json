@@ -1,0 +1,39 @@
+{
+  "accounts": [
+    {
+      "id": "fee-2222-bbbb-cccc-dddd",
+      "userId": "4434567-89ab-cdef-0123-456789abcdef",
+      "itemId": "item-5555-6666-7777-8888",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 10.00,
+      "remaining": 10.00,
+      "dateCreated": "2024-10-15T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "fee-3333-cccc-dddd-eeee",
+      "userId": "4434567-89ab-cdef-0123-456789abcdef",
+      "itemId": "item-6666-7777-8888-9999",
+      "feeFineId": "ff-type-002",
+      "feeFineType": "Lost item fee",
+      "feeFineOwner": "Main Library",
+      "amount": 25.00,
+      "remaining": 25.00,
+      "dateCreated": "2024-11-20T15:30:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    }
+  ],
+  "totalRecords": 2
+}

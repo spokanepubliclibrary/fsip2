@@ -1,0 +1,61 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+coverage.out
+coverage.html
+*.test
+*.out
+
+# Logs
+log/
+*.log
+
+# IDE and editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Documentation (not needed in image)
+documentation/
+*.md
+!README.md
+
+# Test files
+tests/
+*_test.go
+
+# CI/CD and other configs
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Development files
+.CLAUDE
+virtual_refactor.md
+.env
+.env.*
+
+# Docker files (prevent recursive copying)
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Kubernetes (not needed in image)
+deployments/
+
+# OS generated files
+.DS_Store
+Thumbs.db

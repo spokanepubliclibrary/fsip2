@@ -1,0 +1,33 @@
+{
+  "item": {
+    "id": "item-1111-2222-3333-4444",
+    "barcode": "ITEM-001",
+    "status": {
+      "name": "Available"
+    },
+    "materialType": {
+      "name": "Book"
+    },
+    "callNumber": "PS3568.O243 D6 2010",
+    "effectiveLocation": {
+      "name": "Main Library - Stacks",
+      "code": "MAIN-STACKS"
+    }
+  },
+  "instance": {
+    "id": "inst-1111-2222-3333",
+    "title": "The Catcher in the Rye",
+    "contributors": [
+      {
+        "name": "Salinger, J. D."
+      }
+    ],
+    "publication": [
+      {
+        "publisher": "Little, Brown and Company",
+        "dateOfPublication": "2010"
+      }
+    ]
+  },
+  "holdQueue": []
+}

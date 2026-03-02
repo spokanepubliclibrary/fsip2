@@ -1,0 +1,26 @@
+{
+  "id": "item-3333-4444-5555-6666",
+  "barcode": "ITEM-003",
+  "status": {
+    "name": "Awaiting pickup"
+  },
+  "materialType": {
+    "id": "mt-002",
+    "name": "DVD"
+  },
+  "permanentLoanType": {
+    "id": "lt-002",
+    "name": "7 day loan"
+  },
+  "holdingsRecordId": "holdings-3333-4444-5555",
+  "effectiveLocationId": "loc-main-circ",
+  "effectiveLocation": {
+    "id": "loc-main-circ",
+    "name": "Main Library - Circulation Desk",
+    "code": "MAIN-CIRC"
+  },
+  "callNumber": "DVD FIC SHA",
+  "metadata": {
+    "createdDate": "2024-01-01T00:00:00.000Z"
+  }
+}

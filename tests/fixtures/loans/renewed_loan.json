@@ -1,0 +1,20 @@
+{
+  "id": "loan-3333-cccc-dddd-eeee",
+  "userId": "6634567-89ab-cdef-0123-456789abcdef",
+  "itemId": "item-6666-7777-8888-9999",
+  "status": {
+    "name": "Open"
+  },
+  "loanDate": "2024-11-01T10:00:00.000Z",
+  "dueDate": "2024-12-20T23:59:59.000Z",
+  "renewalCount": 1,
+  "item": {
+    "barcode": "ITEM-RENEWED",
+    "title": "Renewed Book",
+    "callNumber": "PR6056 F093"
+  },
+  "metadata": {
+    "createdDate": "2024-11-01T10:00:00.000Z",
+    "updatedDate": "2024-11-15T14:30:00.000Z"
+  }
+}

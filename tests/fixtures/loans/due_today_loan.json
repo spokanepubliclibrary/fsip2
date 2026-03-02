@@ -1,0 +1,19 @@
+{
+  "id": "loan-4444-dddd-eeee-ffff",
+  "userId": "6634567-89ab-cdef-0123-456789abcdef",
+  "itemId": "item-7777-8888-9999-0000",
+  "status": {
+    "name": "Open"
+  },
+  "loanDate": "2024-11-20T10:00:00.000Z",
+  "dueDate": "2024-12-05T23:59:59.000Z",
+  "renewalCount": 0,
+  "item": {
+    "barcode": "ITEM-DUE-TODAY",
+    "title": "Book Due Today",
+    "callNumber": "F128 W63"
+  },
+  "metadata": {
+    "createdDate": "2024-11-20T10:00:00.000Z"
+  }
+}

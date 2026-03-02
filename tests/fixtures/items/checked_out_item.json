@@ -1,0 +1,28 @@
+{
+  "id": "item-2222-3333-4444-5555",
+  "barcode": "ITEM-002",
+  "status": {
+    "name": "Checked out",
+    "date": "2024-12-01T10:00:00.000Z"
+  },
+  "materialType": {
+    "id": "mt-001",
+    "name": "Book"
+  },
+  "permanentLoanType": {
+    "id": "lt-001",
+    "name": "Can circulate"
+  },
+  "holdingsRecordId": "holdings-2222-3333-4444",
+  "effectiveLocationId": "loc-main-stacks",
+  "effectiveLocation": {
+    "id": "loc-main-stacks",
+    "name": "Main Library - Stacks",
+    "code": "MAIN-STACKS"
+  },
+  "callNumber": "F128 .18 W63",
+  "metadata": {
+    "createdDate": "2024-01-01T00:00:00.000Z",
+    "updatedDate": "2024-12-01T10:00:00.000Z"
+  }
+}

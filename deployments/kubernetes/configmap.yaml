@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fsip2-config
+  namespace: fsip2
+  labels:
+    app.kubernetes.io/name: fsip2
+    app.kubernetes.io/component: sip2-server
+data:
+  config.yaml: |
+    # FSIP2 Bootstrap Configuration
+    # See documentation/examples/basic.yaml for full example
+
+    # SIP2 server port
+    port: 6443
+
+    # FOLIO Okapi base URL (required)
+    okapiUrl: https://okapi.example.com
+
+    # Health check HTTP server port
+    healthCheckPort: 8081
+
+    # Token cache configuration
+    tokenCacheCapacity: 100
+    tokenCacheTTL: 3600
+
+    # Configuration reload interval (milliseconds)
+    scanPeriod: 300000
+
+    # Tenant configuration sources
+    tenantConfigSources:
+      - type: file
+        path: /etc/fsip2/tenant-config.yaml
+
+    # Optional: HTTP-based tenant config
+    # - type: http
+    #   url: https://config.example.com/tenant-config.yaml
+    #   pollInterval: 300000
+
+    # Optional: S3-based tenant config
+    # - type: s3
+    #   bucket: my-config-bucket
+    #   key: tenant-config.yaml
+    #   region: us-east-1
+
+  tenant-config.yaml: |
+    # FSIP2 Tenant Configuration
+    # See documentation/examples/tenant-config.yaml for full example
+
+    tenants:
+      - tenant: diku
+        # Error detection (checksum validation)
+        errorDetectionEnabled: true
+
+        # Message delimiters
+        messageDelimiter: "\r"
+        fieldDelimiter: "|"
+
+        # Character encoding
+        charset: UTF-8
+
+        # Logging level: Debugging, Full, Patron, None
+        logLevel: Patron
+
+        # Timezone for date/time formatting
+        timezone: America/New_York
+
+        # Fee/Fine payment settings
+        acceptBulkPayment: false
+        paymentMethod: "Credit card"
+        notifyPatron: false
+
+        # Rolling renewals configuration (optional)
+        # rollingRenewals:
+        #   enabled: true
+        #   renewWithin: 6M
+        #   extendFor: 6Y
+        #   extendExpired: true
+        #   dryRun: false
+        #   selectPatrons: false

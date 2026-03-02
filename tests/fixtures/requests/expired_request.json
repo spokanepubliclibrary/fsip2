@@ -1,0 +1,26 @@
+{
+  "id": "req-4444-dddd-eeee-ffff",
+  "requestType": "Hold",
+  "requestDate": "2024-10-01T09:00:00.000Z",
+  "requesterId": "5534567-89ab-cdef-0123-456789abcdef",
+  "itemId": "item-0000-1111-2222-3333",
+  "instanceId": "inst-4444-5555-6666",
+  "holdingsRecordId": "holdings-7777-8888-9999",
+  "pickupServicePointId": "sp-main",
+  "status": "Closed - Unfilled",
+  "position": 0,
+  "requestExpirationDate": "2024-11-01T00:00:00.000Z",
+  "item": {
+    "barcode": "ITEM-EXPIRED-REQ",
+    "title": "Expired Hold Request"
+  },
+  "requester": {
+    "barcode": "33333333333333",
+    "firstName": "Request",
+    "lastName": "Holder"
+  },
+  "metadata": {
+    "createdDate": "2024-10-01T09:00:00.000Z",
+    "updatedDate": "2024-11-01T00:01:00.000Z"
+  }
+}

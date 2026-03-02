@@ -1,0 +1,178 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fsip2
+  namespace: fsip2
+  labels:
+    app.kubernetes.io/name: fsip2
+    app.kubernetes.io/component: sip2-server
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fsip2
+      app.kubernetes.io/component: sip2-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fsip2
+        app.kubernetes.io/component: sip2-server
+        app.kubernetes.io/version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Security context for the pod
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+
+      # Service account (optional)
+      # serviceAccountName: fsip2
+
+      containers:
+      - name: fsip2
+        image: fsip2:1.0.0
+        imagePullPolicy: IfNotPresent
+
+        # Security context for the container
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1001
+          capabilities:
+            drop:
+            - ALL
+
+        # Command and args
+        args:
+        - --config
+        - /etc/fsip2/config.yaml
+
+        # Ports
+        ports:
+        - name: sip2
+          containerPort: 6443
+          protocol: TCP
+        - name: http-metrics
+          containerPort: 8081
+          protocol: TCP
+
+        # Environment variables (optional)
+        # env:
+        # - name: TZ
+        #   value: "America/New_York"
+
+        # Resource limits and requests
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 512Mi
+
+        # Liveness probe - checks if container is alive
+        livenessProbe:
+          httpGet:
+            path: /admin/health
+            port: http-metrics
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+
+        # Readiness probe - checks if container is ready to serve traffic
+        readinessProbe:
+          httpGet:
+            path: /admin/ready
+            port: http-metrics
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+
+        # Startup probe - allows slow-starting containers extra time
+        startupProbe:
+          httpGet:
+            path: /admin/health
+            port: http-metrics
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 12  # 60 seconds to start (12 * 5s)
+
+        # Volume mounts
+        volumeMounts:
+        - name: config
+          mountPath: /etc/fsip2
+          readOnly: true
+        - name: logs
+          mountPath: /app/log
+        - name: tmp
+          mountPath: /tmp
+
+        # Optional: TLS certificates
+        # - name: tls-certs
+        #   mountPath: /etc/fsip2/certs
+        #   readOnly: true
+
+      # Volumes
+      volumes:
+      - name: config
+        configMap:
+          name: fsip2-config
+          defaultMode: 0444
+      - name: logs
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+
+      # Optional: TLS certificates from secret
+      # - name: tls-certs
+      #   secret:
+      #     secretName: fsip2-secret
+      #     defaultMode: 0444
+      #     items:
+      #     - key: tls.crt
+      #       path: tls.crt
+      #     - key: tls.key
+      #       path: tls.key
+
+      # Pod affinity/anti-affinity rules
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                  - fsip2
+              topologyKey: kubernetes.io/hostname
+
+      # Tolerations (optional)
+      # tolerations:
+      # - key: "node-role.kubernetes.io/edge"
+      #   operator: "Exists"
+      #   effect: "NoSchedule"
