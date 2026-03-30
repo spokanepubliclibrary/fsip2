@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/protocol"
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
@@ -22,7 +23,7 @@ type ItemStatusUpdateHandler struct {
 func NewItemStatusUpdateHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *ItemStatusUpdateHandler {
 	return &ItemStatusUpdateHandler{
 		BaseHandler: NewBaseHandler(logger, tenantConfig),
-		logger:      logger,
+		logger:      logger.With(logging.TypeField(logging.TypeApplication)),
 	}
 }
 
@@ -32,7 +33,6 @@ func (h *ItemStatusUpdateHandler) Handle(ctx context.Context, msg *parser.Messag
 
 	// Validate required fields
 	if err := h.validateRequiredFields(msg, map[parser.FieldCode]string{
-		parser.InstitutionID:  "Institution ID",
 		parser.ItemIdentifier: "Item Identifier",
 	}); err != nil {
 		h.logger.Error("Item status update validation failed", zap.Error(err))

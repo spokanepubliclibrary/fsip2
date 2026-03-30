@@ -7,6 +7,7 @@ import (
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
@@ -23,7 +24,7 @@ type LoginHandler struct {
 func NewLoginHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *LoginHandler {
 	return &LoginHandler{
 		BaseHandler: NewBaseHandler(logger, tenantConfig),
-		logger:      logger,
+		logger:      logger.With(logging.TypeField(logging.TypeApplication)),
 	}
 }
 
@@ -56,7 +57,7 @@ func (h *LoginHandler) Handle(ctx context.Context, msg *parser.Message, session 
 	}
 
 	// Create auth client with token cache capacity of 100
-	authClient := folio.NewAuthClient(session.TenantConfig.OkapiURL, session.TenantConfig.Tenant, 100)
+	authClient := folio.NewAuthClient(session.TenantConfig.OkapiURL, session.TenantConfig.OkapiTenant, 100)
 
 	// Authenticate with FOLIO
 	authResp, err := authClient.Login(ctx, username, password)

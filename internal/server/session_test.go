@@ -137,10 +137,9 @@ func TestSessionConcurrentAccess(t *testing.T) {
 		done <- true
 	}()
 
-	// Writer 2: Update institution info
+	// Writer 2: Update location info
 	go func() {
 		for i := 0; i < 100; i++ {
-			session.SetInstitutionID("inst")
 			session.SetLocationCode("loc")
 		}
 		done <- true
@@ -175,7 +174,6 @@ func TestSessionClear(t *testing.T) {
 	// Set up session data
 	expiresAt := time.Now().Add(10 * time.Minute)
 	session.SetAuthenticated("testuser", "patron-123", "barcode-456", "token-123", expiresAt)
-	session.SetInstitutionID("inst-001")
 	session.SetLocationCode("LOC")
 
 	// Clear session

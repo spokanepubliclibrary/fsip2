@@ -74,7 +74,7 @@ func TestLoad_Defaults(t *testing.T) {
 func TestLoad_WithTenantSource(t *testing.T) {
 	dir := t.TempDir()
 	tenantFile := filepath.Join(dir, "tenant.yaml")
-	tenantYAML := "tenant: load-test\nokapiUrl: http://localhost:9130\n"
+	tenantYAML := "tenants:\n  - tenant: load-test\n    okapiUrl: http://localhost:9130\n"
 	if err := os.WriteFile(tenantFile, []byte(tenantYAML), 0644); err != nil {
 		t.Fatalf("failed to write tenant file: %v", err)
 	}
@@ -107,7 +107,16 @@ func TestLoad_UnsupportedSourceType(t *testing.T) {
 func TestLoadTenantConfigs_SCTenants(t *testing.T) {
 	dir := t.TempDir()
 	tenantFile := filepath.Join(dir, "tenant.yaml")
-	tenantYAML := "tenant: main-tenant\nokapiUrl: http://localhost:9130\nscTenants:\n  - tenant: sub-tenant\n"
+	tenantYAML := `tenants:
+  - tenant: main-tenant
+    okapiUrl: http://localhost:9130
+scTenants:
+  - tenant: sub-tenant
+    port: 7000
+    usernamePrefixes:
+      - main_sip1
+      - main_sip2
+`
 	if err := os.WriteFile(tenantFile, []byte(tenantYAML), 0644); err != nil {
 		t.Fatalf("failed to write tenant file: %v", err)
 	}
@@ -131,8 +140,199 @@ func TestLoadTenantConfigs_SCTenants(t *testing.T) {
 	if _, ok := cfg.Tenants["main-tenant"]; !ok {
 		t.Error("expected 'main-tenant' to be loaded")
 	}
-	if _, ok := cfg.Tenants["sub-tenant"]; !ok {
-		t.Error("expected 'sub-tenant' to be loaded from scTenants")
+
+	if len(cfg.SCTenants) != 1 {
+		t.Fatalf("expected 1 SCTenant, got %d", len(cfg.SCTenants))
+	}
+	sc := cfg.SCTenants[0]
+	if sc.Tenant != "sub-tenant" {
+		t.Errorf("expected SCTenant Tenant 'sub-tenant', got %q", sc.Tenant)
+	}
+	if sc.Port != 7000 {
+		t.Errorf("expected SCTenant Port 7000, got %d", sc.Port)
+	}
+	if len(sc.UsernamePrefixes) != 2 || sc.UsernamePrefixes[0] != "main_sip1" || sc.UsernamePrefixes[1] != "main_sip2" {
+		t.Errorf("unexpected UsernamePrefixes: %v", sc.UsernamePrefixes)
+	}
+}
+
+func TestLoadTenantConfigs_SCTenants_FullUsernamePrefix(t *testing.T) {
+	// A full username (e.g. "main_sip1") used as a usernamePrefixes entry is
+	// treated as a plain string — no special parsing or transformation.
+	dir := t.TempDir()
+	tenantFile := filepath.Join(dir, "tenant.yaml")
+	tenantYAML := `tenants:
+  - tenant: alpha
+    okapiUrl: http://localhost:9130
+scTenants:
+  - tenant: alpha-sc
+    port: 6500
+    usernamePrefixes:
+      - main_sip1
+`
+	if err := os.WriteFile(tenantFile, []byte(tenantYAML), 0644); err != nil {
+		t.Fatalf("failed to write tenant file: %v", err)
+	}
+
+	cfg := &Config{
+		Port:               6443,
+		HealthCheckPort:    8081,
+		OkapiURL:           "http://okapi.example.com",
+		TokenCacheCapacity: 100,
+		ScanPeriod:         5000,
+		Tenants:            make(map[string]*TenantConfig),
+		TenantConfigSources: []ConfigSource{
+			{Type: "file", Path: tenantFile},
+		},
+	}
+
+	if err := cfg.loadTenantConfigs(); err != nil {
+		t.Fatalf("loadTenantConfigs() failed: %v", err)
+	}
+
+	if len(cfg.SCTenants) != 1 {
+		t.Fatalf("expected 1 SCTenant, got %d", len(cfg.SCTenants))
+	}
+	sc := cfg.SCTenants[0]
+	if len(sc.UsernamePrefixes) != 1 {
+		t.Fatalf("expected 1 UsernamePrefixes entry, got %d", len(sc.UsernamePrefixes))
+	}
+	if sc.UsernamePrefixes[0] != "main_sip1" {
+		t.Errorf("expected UsernamePrefixes[0] = %q, got %q", "main_sip1", sc.UsernamePrefixes[0])
+	}
+}
+
+func TestLoad_FlatFormatTenantSource_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	tenantFile := filepath.Join(dir, "tenant.yaml")
+	// Old flat format — no "tenants:" key — must be rejected.
+	tenantYAML := "tenant: load-test\nokapiUrl: http://localhost:9130\n"
+	if err := os.WriteFile(tenantFile, []byte(tenantYAML), 0644); err != nil {
+		t.Fatalf("failed to write tenant file: %v", err)
+	}
+
+	mainYAML := "port: 6443\nokapiUrl: http://okapi.example.com\nhealthCheckPort: 8081\ntokenCacheCapacity: 100\ntenantConfigSources:\n  - type: file\n    path: " + tenantFile + "\n"
+	mainFile := filepath.Join(dir, "main.yaml")
+	if err := os.WriteFile(mainFile, []byte(mainYAML), 0644); err != nil {
+		t.Fatalf("failed to write main config file: %v", err)
+	}
+
+	_, err := Load(mainFile)
+	if err == nil {
+		t.Error("expected error for flat-format tenant source, got nil")
+	}
+}
+
+func TestLoad_WithListFormatTenantSource_MultiTenant(t *testing.T) {
+	dir := t.TempDir()
+	tenantFile := filepath.Join(dir, "tenant.yaml")
+	tenantYAML := "tenants:\n  - tenant: tenant-a\n    okapiUrl: http://localhost:9130\n  - tenant: tenant-b\n    okapiUrl: http://localhost:9131\n"
+	if err := os.WriteFile(tenantFile, []byte(tenantYAML), 0644); err != nil {
+		t.Fatalf("failed to write tenant file: %v", err)
+	}
+
+	mainYAML := "port: 6443\nokapiUrl: http://okapi.example.com\nhealthCheckPort: 8081\ntokenCacheCapacity: 100\ntenantConfigSources:\n  - type: file\n    path: " + tenantFile + "\n"
+	mainFile := filepath.Join(dir, "main.yaml")
+	if err := os.WriteFile(mainFile, []byte(mainYAML), 0644); err != nil {
+		t.Fatalf("failed to write main config file: %v", err)
+	}
+
+	cfg, err := Load(mainFile)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if _, ok := cfg.Tenants["tenant-a"]; !ok {
+		t.Error("expected 'tenant-a' to be loaded")
+	}
+	if _, ok := cfg.Tenants["tenant-b"]; !ok {
+		t.Error("expected 'tenant-b' to be loaded")
+	}
+}
+
+func TestLoadTenantConfigs_MultiTenantFile(t *testing.T) {
+	dir := t.TempDir()
+	tenantFile := filepath.Join(dir, "tenant.yaml")
+	tenantYAML := `tenants:
+  - tenant: alpha
+    okapiUrl: http://localhost:9130
+  - tenant: beta
+    okapiUrl: http://localhost:9131
+  - tenant: gamma
+    okapiUrl: http://localhost:9132
+scTenants:
+  - tenant: alpha-sc
+    port: 6500
+`
+	if err := os.WriteFile(tenantFile, []byte(tenantYAML), 0644); err != nil {
+		t.Fatalf("failed to write tenant file: %v", err)
+	}
+
+	cfg := &Config{
+		Port:               6443,
+		HealthCheckPort:    8081,
+		OkapiURL:           "http://okapi.example.com",
+		TokenCacheCapacity: 100,
+		ScanPeriod:         5000,
+		Tenants:            make(map[string]*TenantConfig),
+		TenantConfigSources: []ConfigSource{
+			{Type: "file", Path: tenantFile},
+		},
+	}
+
+	if err := cfg.loadTenantConfigs(); err != nil {
+		t.Fatalf("loadTenantConfigs() failed: %v", err)
+	}
+
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		if _, ok := cfg.Tenants[name]; !ok {
+			t.Errorf("expected tenant %q to be loaded", name)
+		}
+	}
+
+	if len(cfg.SCTenants) != 1 {
+		t.Fatalf("expected 1 SCTenant, got %d", len(cfg.SCTenants))
+	}
+	if cfg.SCTenants[0].Tenant != "alpha-sc" {
+		t.Errorf("expected SCTenant 'alpha-sc', got %q", cfg.SCTenants[0].Tenant)
+	}
+}
+
+func TestLoadTenantConfigs_MultiSource_MultiTenantFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	fileA := filepath.Join(dir, "a.yaml")
+	yamlA := "tenants:\n  - tenant: a1\n    okapiUrl: http://localhost:9130\n  - tenant: a2\n    okapiUrl: http://localhost:9131\n"
+	if err := os.WriteFile(fileA, []byte(yamlA), 0644); err != nil {
+		t.Fatalf("failed to write fileA: %v", err)
+	}
+
+	fileB := filepath.Join(dir, "b.yaml")
+	yamlB := "tenants:\n  - tenant: b1\n    okapiUrl: http://localhost:9132\n  - tenant: b2\n    okapiUrl: http://localhost:9133\n"
+	if err := os.WriteFile(fileB, []byte(yamlB), 0644); err != nil {
+		t.Fatalf("failed to write fileB: %v", err)
+	}
+
+	cfg := &Config{
+		Port:               6443,
+		HealthCheckPort:    8081,
+		OkapiURL:           "http://okapi.example.com",
+		TokenCacheCapacity: 100,
+		ScanPeriod:         5000,
+		Tenants:            make(map[string]*TenantConfig),
+		TenantConfigSources: []ConfigSource{
+			{Type: "file", Path: fileA},
+			{Type: "file", Path: fileB},
+		},
+	}
+
+	if err := cfg.loadTenantConfigs(); err != nil {
+		t.Fatalf("loadTenantConfigs() failed: %v", err)
+	}
+
+	for _, name := range []string{"a1", "a2", "b1", "b2"} {
+		if _, ok := cfg.Tenants[name]; !ok {
+			t.Errorf("expected tenant %q to be loaded", name)
+		}
 	}
 }
 

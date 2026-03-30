@@ -22,7 +22,7 @@ func TestE2E_Error_LoginInvalidCredentials(t *testing.T) {
 	defer conn.Close()
 
 	t.Log("Testing Login with Invalid Credentials")
-	resp := setup.Exchange(t, conn, testutil.NewLoginMessage("invaliduser", "wrongpass"))
+	resp := setup.Exchange(t, conn, testutil.NewLoginMessage("invaliduser", "wrongpass", ""))
 	assert.True(t, len(resp) >= 2 && resp[:2] == "94", "Expected Login Response (94), got: %s", resp)
 	assert.True(t, len(resp) >= 3 && resp[2] == '0', "Expected login failure (0), got: %c", resp[2])
 }

@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"fmt"
 	"net"
 	"testing"
 
@@ -51,9 +52,18 @@ func TestE2E_CheckinFlow(t *testing.T) {
 
 	setup.Login(t, conn)
 
-	t.Log("Testing Checkin")
+	t.Log("Testing Checkin — ok byte must be 1 (success)")
 	resp := setup.Exchange(t, conn, testutil.NewCheckinMessage("test-inst", "ITEM001"))
-	assert.True(t, len(resp) >= 2 && resp[:2] == "10", "Expected Checkin Response (10), got: %s", resp)
+	require.True(t, len(resp) >= 2 && resp[:2] == "10", "Expected Checkin Response (10), got: %s", resp)
+	assert.True(t, len(resp) >= 3 && resp[2] == '1', "Expected checkin ok=1, got: %c (full response: %s)", resp[2], resp)
+
+	t.Log("Testing Checkin — AP from request is echoed in response; CP UUID is not used as AP")
+	const testAP = "MAIN-DESK"
+	// 09 message with an explicit AP field
+	checkinWithAP := fmt.Sprintf("09N20250110    08150020250110    081500|AOtest-inst|ABITEM002|AP%s\r", testAP)
+	resp2 := setup.Exchange(t, conn, checkinWithAP)
+	require.True(t, len(resp2) >= 2 && resp2[:2] == "10", "Expected Checkin Response (10) for AP echo test, got: %s", resp2)
+	assertSIP2Field(t, resp2, "AP", testAP)
 }
 
 // TestE2E_RenewalFlow tests the renewal workflow

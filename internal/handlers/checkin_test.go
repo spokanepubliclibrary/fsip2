@@ -394,31 +394,38 @@ func TestCheckinHandler_Handle_MissingFields(t *testing.T) {
 
 	logger := zap.NewNop()
 	handler := NewCheckinHandler(logger, tenantConfig)
-	session := types.NewSession("test-session", tenantConfig)
+	unauthSession := types.NewSession("test-session", tenantConfig)
 
 	tests := []struct {
 		name           string
 		fields         map[string]string
+		session        *types.Session
 		expectedPrefix string
 	}{
-		{
-			name: "Missing institution ID",
-			fields: map[string]string{
-				string(parser.ItemIdentifier): "123456789",
-			},
-			expectedPrefix: "100", // Should fail
-		},
 		{
 			name: "Missing item identifier",
 			fields: map[string]string{
 				string(parser.InstitutionID): "INST01",
 			},
+			session:        unauthSession,
 			expectedPrefix: "100", // Should fail
 		},
 		{
 			name:           "Missing both required fields",
 			fields:         map[string]string{},
+			session:        unauthSession,
 			expectedPrefix: "100", // Should fail
+		},
+		{
+			name: "Missing CP in session",
+			fields: map[string]string{
+				string(parser.InstitutionID):   "INST01",
+				string(parser.ItemIdentifier):  "123456789",
+				string(parser.CurrentLocation): "AP-LOC",
+			},
+			// Authenticated session without LocationCode — CP was not sent at login
+			session:        testutil.NewAuthSession(tenantConfig),
+			expectedPrefix: "100", // Should fail — CP required
 		},
 	}
 
@@ -431,7 +438,7 @@ func TestCheckinHandler_Handle_MissingFields(t *testing.T) {
 			}
 
 			ctx := context.Background()
-			response, err := handler.Handle(ctx, msg, session)
+			response, err := handler.Handle(ctx, msg, tt.session)
 
 			if err != nil {
 				t.Errorf("Expected no error, got: %v", err)

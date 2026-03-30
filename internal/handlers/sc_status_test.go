@@ -71,7 +71,6 @@ func TestSCStatusHandler_Handle_WithInstitutionID(t *testing.T) {
 	handler := NewSCStatusHandler(logger, tenantConfig)
 
 	session := types.NewSession("test-session", tenantConfig)
-	session.SetInstitutionID("CUSTOM-INST-ID")
 
 	msg := &parser.Message{
 		Code:   parser.SCStatus,
@@ -86,9 +85,9 @@ func TestSCStatusHandler_Handle_WithInstitutionID(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	// Verify response contains the custom institution ID
-	if !strings.Contains(response, "AOCUSTOM-INST-ID") {
-		t.Errorf("Response should contain institution ID, got: %s", response)
+	// Verify response contains the tenant name as institution ID (AO is a pure echo for SC Status)
+	if !strings.Contains(response, "AOtest-library") {
+		t.Errorf("Response should contain tenant name as institution ID, got: %s", response)
 	}
 }
 
@@ -194,16 +193,15 @@ func TestSCStatusHandler_BuildACSStatusResponse_WithCustomInstitution(t *testing
 	handler := NewSCStatusHandler(logger, tenantConfig)
 
 	session := types.NewSession("test-session", tenantConfig)
-	session.SetInstitutionID("BRANCH-001")
 
 	response := handler.buildACSStatusResponse(session, "1")
 
-	// Verify uses the session's institution ID
-	if !strings.Contains(response, "AOBRANCH-001") {
-		t.Errorf("Response should use session institution ID, got: %s", response)
+	// Verify AO uses TenantConfig.Tenant (SC Status has no incoming AO to echo)
+	if !strings.Contains(response, "AOmain-library") {
+		t.Errorf("Response should use tenant name as institution ID, got: %s", response)
 	}
 
-	// Verify library name still uses tenant config
+	// Verify library name uses tenant config
 	if !strings.Contains(response, "AMmain-library") {
 		t.Errorf("Response should contain library name from tenant config, got: %s", response)
 	}
@@ -563,7 +561,6 @@ func TestSCStatusHandler_CompleteResponse(t *testing.T) {
 	logger := zap.NewNop()
 	handler := NewSCStatusHandler(logger, tenantConfig)
 	session := types.NewSession("test-session", tenantConfig)
-	session.SetInstitutionID("spokane")
 	session.SetLocationCode("f1c4dae1-e71a-473d-b565-38203c017dd0")
 
 	response := handler.buildACSStatusResponse(session, "1")

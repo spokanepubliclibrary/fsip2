@@ -32,7 +32,7 @@ func openLoanWithDueDate() *models.Loan {
 func TestCheckoutHandle_Success(t *testing.T) {
 	tc := testutil.NewTenantConfig()
 	// NewAuthSession populates patronID = "user-123"; handler skips GetUserByBarcode.
-	sess := testutil.NewAuthSession(tc)
+	sess := testutil.NewAuthSession(tc, testutil.WithLocationCode("test-service-point-uuid"))
 	loan := openLoanWithDueDate()
 	item := availableItemNoHoldings("item-co-001", "ITEM-CO-001")
 
@@ -69,7 +69,7 @@ func TestCheckoutHandle_Success(t *testing.T) {
 func TestCheckoutHandle_UserNotFound(t *testing.T) {
 	tc := testutil.NewTenantConfig()
 	// Empty patron ID → handler calls GetUserByBarcode.
-	sess := testutil.NewAuthSession(tc, testutil.WithSessionUser("testuser", "", ""))
+	sess := testutil.NewAuthSession(tc, testutil.WithSessionUser("testuser", "", ""), testutil.WithLocationCode("test-service-point-uuid"))
 
 	mockPatron := &MockPatronClient{}
 
@@ -99,7 +99,7 @@ func TestCheckoutHandle_UserNotFound(t *testing.T) {
 func TestCheckoutHandle_CheckoutPolicyViolation(t *testing.T) {
 	tc := testutil.NewTenantConfig()
 	// Empty patron ID → handler calls GetUserByBarcode first.
-	sess := testutil.NewAuthSession(tc, testutil.WithSessionUser("testuser", "", ""))
+	sess := testutil.NewAuthSession(tc, testutil.WithSessionUser("testuser", "", ""), testutil.WithLocationCode("test-service-point-uuid"))
 	user := makeTestUser()
 
 	mockPatron := &MockPatronClient{}
@@ -133,7 +133,7 @@ func TestCheckoutHandle_CheckoutPolicyViolation(t *testing.T) {
 // with the item barcode used as the fallback title.
 func TestCheckoutHandle_ItemFetchFailsAfterCheckout(t *testing.T) {
 	tc   := testutil.NewTenantConfig()
-	sess := testutil.NewAuthSession(tc) // patronID set → skips GetUserByBarcode
+	sess := testutil.NewAuthSession(tc, testutil.WithLocationCode("test-service-point-uuid")) // patronID set → skips GetUserByBarcode
 	loan := openLoanWithDueDate()
 
 	mockCirc := &MockCirculationClient{}
@@ -167,7 +167,7 @@ func TestCheckoutHandle_ItemFetchFailsAfterCheckout(t *testing.T) {
 // it in the checkout response.
 func TestCheckoutHandle_TitleFromHoldings(t *testing.T) {
 	tc   := testutil.NewTenantConfig()
-	sess := testutil.NewAuthSession(tc) // patronID set
+	sess := testutil.NewAuthSession(tc, testutil.WithLocationCode("test-service-point-uuid")) // patronID set
 	loan := openLoanWithDueDate()
 
 	item := &models.Item{

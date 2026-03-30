@@ -38,7 +38,7 @@
 // The configuration supports multiple FOLIO tenants, each with independent settings.
 // Tenants are resolved at runtime using one of four resolution strategies:
 //   - SC terminal tenant: Based on SC login terminal username
-//   - Institution ID tenant: Based on AO field in messages
+//   - Location code tenant: Based on CP field in LOGIN message
 //   - Patron ID tenant: Based on AA field patron barcode
 //   - Username tenant: Based on CO login username
 //

@@ -13,6 +13,7 @@ type SessionOption func(*sessionOpts)
 type sessionOpts struct {
 	username, userID, barcode, token string
 	expiresIn                        time.Duration
+	locationCode                     string
 }
 
 func WithSessionUser(username, userID, barcode string) SessionOption {
@@ -21,6 +22,10 @@ func WithSessionUser(username, userID, barcode string) SessionOption {
 
 func WithExpiredToken() SessionOption {
 	return func(o *sessionOpts) { o.expiresIn = -10 * time.Minute }
+}
+
+func WithLocationCode(code string) SessionOption {
+	return func(o *sessionOpts) { o.locationCode = code }
 }
 
 // NewSession returns an unauthenticated session.
@@ -42,5 +47,8 @@ func NewAuthSession(tc *config.TenantConfig, opts ...SessionOption) *types.Sessi
 		opt(o)
 	}
 	s.SetAuthenticated(o.username, o.userID, o.barcode, o.token, time.Now().Add(o.expiresIn))
+	if o.locationCode != "" {
+		s.SetLocationCode(o.locationCode)
+	}
 	return s
 }

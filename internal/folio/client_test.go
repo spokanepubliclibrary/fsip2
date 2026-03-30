@@ -7,6 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // Tests for HTTPError methods
@@ -256,4 +261,96 @@ func TestHTTPError_Error(t *testing.T) {
 	if msg == "" {
 		t.Error("Expected non-empty error message")
 	}
+}
+
+// newObservedClient returns a Client whose logger is backed by an observer core,
+// allowing tests to inspect emitted log entries.
+func newObservedClient(baseURL string, logger *zap.Logger) *Client {
+	initSharedHTTPClient()
+	return &Client{
+		httpClient: sharedHTTPClient,
+		baseURL:    baseURL,
+		tenant:     "test-tenant",
+		timeout:    0,
+		logger:     logger,
+	}
+}
+
+func TestClient_DebugLogs_SuccessfulRequest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer srv.Close()
+
+	core, recorded := observer.New(zap.DebugLevel)
+	client := newObservedClient(srv.URL, zap.New(core))
+
+	var result map[string]string
+	err := client.Get(context.Background(), "/test", "tok", &result)
+	require.NoError(t, err)
+
+	entries := recorded.All()
+	require.Len(t, entries, 2, "expected folio_request and folio_response debug entries")
+
+	reqEntry := entries[0]
+	assert.Equal(t, zap.DebugLevel, reqEntry.Level)
+	assert.Equal(t, "FOLIO API request", reqEntry.Message)
+	assert.Equal(t, "folio_request", reqEntry.ContextMap()["type"])
+	assert.Equal(t, "GET", reqEntry.ContextMap()["method"])
+	assert.Equal(t, "test-tenant", reqEntry.ContextMap()["tenant"])
+
+	respEntry := entries[1]
+	assert.Equal(t, zap.DebugLevel, respEntry.Level)
+	assert.Equal(t, "FOLIO API response", respEntry.Message)
+	assert.Equal(t, "folio_response", respEntry.ContextMap()["type"])
+	assert.Equal(t, "GET", respEntry.ContextMap()["method"])
+	assert.EqualValues(t, http.StatusOK, respEntry.ContextMap()["status_code"])
+}
+
+func TestClient_DebugLogs_HTTPErrorResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	core, recorded := observer.New(zap.DebugLevel)
+	client := newObservedClient(srv.URL, zap.New(core))
+
+	err := client.Get(context.Background(), "/missing", "tok", nil)
+	require.Error(t, err)
+
+	entries := recorded.All()
+	require.Len(t, entries, 2, "expected folio_request and folio_response debug entries on error")
+
+	assert.Equal(t, "folio_request", entries[0].ContextMap()["type"])
+
+	respEntry := entries[1]
+	assert.Equal(t, "FOLIO API response", respEntry.Message)
+	assert.Equal(t, "folio_response", respEntry.ContextMap()["type"])
+	assert.EqualValues(t, http.StatusNotFound, respEntry.ContextMap()["status_code"])
+}
+
+func TestClient_DebugLogs_NilLoggerNoPanic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// nil logger — must not panic
+	client := newObservedClient(srv.URL, nil)
+	assert.NotPanics(t, func() {
+		_ = client.Get(context.Background(), "/test", "tok", nil)
+	})
+}
+
+func TestSetClientLogger_SetsPackageVar(t *testing.T) {
+	original := clientLogger
+	defer func() { clientLogger = original }()
+
+	core, _ := observer.New(zap.DebugLevel)
+	logger := zap.New(core)
+	SetClientLogger(logger)
+	assert.Equal(t, logger, clientLogger)
 }

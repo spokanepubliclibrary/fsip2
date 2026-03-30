@@ -17,6 +17,7 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
 	"github.com/spokanepubliclibrary/fsip2/tests/testutil"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // TestGetResponseBuilder verifies getResponseBuilder returns a non-nil builder.
@@ -363,4 +364,110 @@ func TestFetchItemTitle_InstanceFetchFails(t *testing.T) {
 	assert.Error(t, err)
 	assert.Empty(t, title)
 	mockInv.AssertExpectations(t)
+}
+
+// TestLogRequest_TypeField verifies that logRequest emits an info entry tagged
+// type: "sip_request" with the correct message_code and session_id fields.
+func TestLogRequest_TypeField(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	core, recorded := observer.New(zap.DebugLevel)
+	h := NewBaseHandler(zap.New(core), tc)
+	session := testutil.NewSession(tc)
+
+	msg := &parser.Message{
+		Code:   parser.CheckoutRequest,
+		Fields: make(map[string]string),
+	}
+
+	h.logRequest(msg, session)
+
+	entries := recorded.All()
+	require.Len(t, entries, 1, "expected exactly one log entry from logRequest")
+	entry := entries[0]
+	assert.Equal(t, zap.InfoLevel, entry.Level)
+	assert.Equal(t, "sip_request", entry.ContextMap()["type"],
+		"logRequest must emit type=sip_request")
+	assert.Equal(t, string(parser.CheckoutRequest), entry.ContextMap()["message_code"])
+	assert.Equal(t, session.ID, entry.ContextMap()["session_id"])
+}
+
+// TestLogResponse_TypeField_Success verifies that logResponse (success path) emits
+// an info entry tagged type: "sip_response".
+func TestLogResponse_TypeField_Success(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	core, recorded := observer.New(zap.DebugLevel)
+	h := NewBaseHandler(zap.New(core), tc)
+	session := testutil.NewSession(tc)
+
+	h.logResponse("12", session, nil)
+
+	entries := recorded.All()
+	require.Len(t, entries, 1, "expected exactly one log entry from logResponse success")
+	entry := entries[0]
+	assert.Equal(t, zap.InfoLevel, entry.Level)
+	assert.Equal(t, "sip_response", entry.ContextMap()["type"],
+		"logResponse success must emit type=sip_response")
+	assert.Equal(t, "12", entry.ContextMap()["response_code"])
+	assert.Equal(t, session.ID, entry.ContextMap()["session_id"])
+}
+
+// TestLogResponse_TypeField_Error verifies that logResponse (error path) emits
+// an error entry tagged type: "sip_response".
+func TestLogResponse_TypeField_Error(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	core, recorded := observer.New(zap.DebugLevel)
+	h := NewBaseHandler(zap.New(core), tc)
+	session := testutil.NewSession(tc)
+
+	h.logResponse("96", session, errors.New("handler error"))
+
+	entries := recorded.All()
+	require.Len(t, entries, 1, "expected exactly one log entry from logResponse error")
+	entry := entries[0]
+	assert.Equal(t, zap.ErrorLevel, entry.Level)
+	assert.Equal(t, "sip_response", entry.ContextMap()["type"],
+		"logResponse error must emit type=sip_response")
+	assert.Equal(t, "96", entry.ContextMap()["response_code"])
+	assert.Equal(t, session.ID, entry.ContextMap()["session_id"])
+}
+
+// TestGetAuthenticatedFolioClient_ExpiredToken_LogsAtDebugNotInfo verifies that the
+// "Token expired, attempting automatic refresh" log entry is emitted at debug level.
+func TestGetAuthenticatedFolioClient_ExpiredToken_LogsAtDebugNotInfo(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+
+	core, recorded := observer.New(zap.DebugLevel)
+	h := NewBaseHandler(zap.New(core), tc)
+	session := testutil.NewSession(tc)
+
+	// Set expired token with credentials so the refresh path is triggered.
+	expiredAt := time.Now().Add(-10 * time.Minute)
+	session.SetAuthenticated("user", "", "", "old-token", expiredAt)
+	session.SetAuthCredentials("password123")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// No FOLIO server — refresh will fail, but we only care about log levels.
+	_, _, _ = h.getAuthenticatedFolioClient(ctx, session)
+
+	for _, e := range recorded.All() {
+		if e.Message == "Token expired, attempting automatic refresh" ||
+			e.Message == "Token refresh successful" {
+			assert.Equal(t, zap.DebugLevel, e.Level,
+				"token expiration/refresh log %q must be debug level", e.Message)
+			assert.NotEqual(t, zap.InfoLevel, e.Level,
+				"token expiration/refresh log %q must NOT be info level", e.Message)
+		}
+	}
+
+	// Confirm "Token expired, attempting automatic refresh" was actually emitted.
+	found := false
+	for _, e := range recorded.All() {
+		if e.Message == "Token expired, attempting automatic refresh" {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected 'Token expired, attempting automatic refresh' log entry")
 }

@@ -54,171 +54,288 @@ func TestResolveAtConnectDefault(t *testing.T) {
 	}
 }
 
-// TestResolveAtConnectWithIPResolver tests IP-based resolution
+// TestResolveAtConnectWithIPResolver tests IP-based resolution using top-level SCTenants.
 func TestResolveAtConnectWithIPResolver(t *testing.T) {
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
 			"default": {
-				Tenant: "default",
+				Tenant:      "default",
+				OkapiURL:    "https://default.example.com",
+				OkapiTenant: "default",
 			},
 			"tenant1": {
-				Tenant: "tenant1",
-				SCTenants: []config.SCTenantConfig{
-					{
-						Tenant:   "tenant1",
-						SCSubnet: "192.168.1.0/24",
-					},
-				},
+				Tenant:      "tenant1",
+				OkapiURL:    "https://tenant1.example.com",
+				OkapiTenant: "tenant1",
+			},
+		},
+		SCTenants: []config.SCTenantConfig{
+			{
+				Tenant:   "tenant1",
+				SCSubnet: "192.168.1.0/24",
 			},
 		},
 	}
 
 	svc := NewService(cfg)
 
-	// Test matching IP
-	tenant, err := svc.ResolveAtConnect(context.Background(), "192.168.1.100", 12345, 6443)
+	// Matching IP resolves to the looked-up TenantConfig with correct OkapiURL.
+	result, err := svc.ResolveAtConnect(context.Background(), "192.168.1.100", 12345, 6443)
 	if err != nil {
 		t.Fatalf("ResolveAtConnect() error = %v", err)
 	}
-
-	if tenant.Tenant != "tenant1" {
-		t.Errorf("Expected tenant1 for IP 192.168.1.100, got '%s'", tenant.Tenant)
+	if result.Tenant != "tenant1" {
+		t.Errorf("Expected tenant1 for IP 192.168.1.100, got '%s'", result.Tenant)
+	}
+	if result.OkapiURL != "https://tenant1.example.com" {
+		t.Errorf("Expected OkapiURL 'https://tenant1.example.com', got '%s'", result.OkapiURL)
 	}
 
-	// Test non-matching IP
-	tenant, err = svc.ResolveAtConnect(context.Background(), "10.0.0.1", 12345, 6443)
+	// Non-matching IP falls back to default.
+	result, err = svc.ResolveAtConnect(context.Background(), "10.0.0.1", 12345, 6443)
 	if err != nil {
 		t.Fatalf("ResolveAtConnect() error = %v", err)
 	}
-
-	if tenant.Tenant != "default" {
-		t.Errorf("Expected default for IP 10.0.0.1, got '%s'", tenant.Tenant)
+	if result.Tenant != "default" {
+		t.Errorf("Expected default for IP 10.0.0.1, got '%s'", result.Tenant)
 	}
 }
 
-// TestResolveAtConnectWithPortResolver tests port-based resolution
+// TestResolveAtConnectWithPortResolver tests port-based resolution using top-level SCTenants.
+// Verifies that the resolver is registered with the correct looked-up TenantConfig.
 func TestResolveAtConnectWithPortResolver(t *testing.T) {
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
 			"default": {
-				Tenant: "default",
+				Tenant:      "default",
+				OkapiURL:    "https://default.example.com",
+				OkapiTenant: "default",
 			},
 			"tenant2": {
+				Tenant:      "tenant2",
+				OkapiURL:    "https://tenant2.example.com",
+				OkapiTenant: "tenant2",
+			},
+		},
+		SCTenants: []config.SCTenantConfig{
+			{
 				Tenant: "tenant2",
-				SCTenants: []config.SCTenantConfig{
-					{
-						Tenant: "tenant2",
-						Port:   6444,
-					},
-				},
+				Port:   6444,
 			},
 		},
 	}
 
 	svc := NewService(cfg)
 
-	// Test matching port
-	tenant, err := svc.ResolveAtConnect(context.Background(), "127.0.0.1", 12345, 6444)
+	// Matching port resolves to looked-up TenantConfig with correct OkapiURL/OkapiTenant.
+	result, err := svc.ResolveAtConnect(context.Background(), "127.0.0.1", 12345, 6444)
 	if err != nil {
 		t.Fatalf("ResolveAtConnect() error = %v", err)
 	}
-
-	if tenant.Tenant != "tenant2" {
-		t.Errorf("Expected tenant2 for port 6444, got '%s'", tenant.Tenant)
+	if result.Tenant != "tenant2" {
+		t.Errorf("Expected tenant2 for port 6444, got '%s'", result.Tenant)
+	}
+	if result.OkapiURL != "https://tenant2.example.com" {
+		t.Errorf("Expected OkapiURL 'https://tenant2.example.com', got '%s'", result.OkapiURL)
+	}
+	if result.OkapiTenant != "tenant2" {
+		t.Errorf("Expected OkapiTenant 'tenant2', got '%s'", result.OkapiTenant)
 	}
 
-	// Test non-matching port
-	tenant, err = svc.ResolveAtConnect(context.Background(), "127.0.0.1", 12345, 6443)
+	// Non-matching port falls back to default.
+	result, err = svc.ResolveAtConnect(context.Background(), "127.0.0.1", 12345, 6443)
 	if err != nil {
 		t.Fatalf("ResolveAtConnect() error = %v", err)
 	}
-
-	if tenant.Tenant != "default" {
-		t.Errorf("Expected default for port 6443, got '%s'", tenant.Tenant)
+	if result.Tenant != "default" {
+		t.Errorf("Expected default for port 6443, got '%s'", result.Tenant)
 	}
 }
 
-// TestResolveAtLoginWithLocationCode tests location code resolution
+// TestResolveAtLoginWithLocationCode tests location code resolution using top-level SCTenants.
 func TestResolveAtLoginWithLocationCode(t *testing.T) {
-	defaultConfig := &config.TenantConfig{Tenant: "default"}
+	defaultConfig := &config.TenantConfig{
+		Tenant:      "default",
+		OkapiURL:    "https://default.example.com",
+		OkapiTenant: "default",
+	}
 
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
 			"default": defaultConfig,
 			"tenant3": {
-				Tenant: "tenant3",
-				SCTenants: []config.SCTenantConfig{
-					{
-						Tenant:        "tenant3",
-						LocationCodes: []string{"MAIN", "BRANCH1"},
-					},
-				},
+				Tenant:      "tenant3",
+				OkapiURL:    "https://tenant3.example.com",
+				OkapiTenant: "tenant3",
+			},
+		},
+		SCTenants: []config.SCTenantConfig{
+			{
+				Tenant:        "tenant3",
+				LocationCodes: []string{"MAIN", "BRANCH1"},
 			},
 		},
 	}
 
 	svc := NewService(cfg)
 
-	// Test matching location code
-	tenant, err := svc.ResolveAtLogin(context.Background(), "user1", "MAIN", "LIB", defaultConfig)
+	// Matching location code.
+	result, err := svc.ResolveAtLogin(context.Background(), "user1", "MAIN", defaultConfig)
 	if err != nil {
 		t.Fatalf("ResolveAtLogin() error = %v", err)
 	}
-
-	if tenant.Tenant != "tenant3" {
-		t.Errorf("Expected tenant3 for location MAIN, got '%s'", tenant.Tenant)
+	if result.Tenant != "tenant3" {
+		t.Errorf("Expected tenant3 for location MAIN, got '%s'", result.Tenant)
 	}
 
-	// Test non-matching location code
-	tenant, err = svc.ResolveAtLogin(context.Background(), "user1", "UNKNOWN", "LIB", defaultConfig)
+	// Non-matching location code falls back to default.
+	result, err = svc.ResolveAtLogin(context.Background(), "user1", "UNKNOWN", defaultConfig)
 	if err != nil {
 		t.Fatalf("ResolveAtLogin() error = %v", err)
 	}
-
-	if tenant.Tenant != "default" {
-		t.Errorf("Expected default for unknown location, got '%s'", tenant.Tenant)
+	if result.Tenant != "default" {
+		t.Errorf("Expected default for unknown location, got '%s'", result.Tenant)
 	}
 }
 
-// TestResolveAtLoginWithUsernamePrefix tests username prefix resolution
+// TestResolveAtLoginWithUsernamePrefix tests username prefix resolution using top-level SCTenants.
+// Verifies the resolver returns the correct looked-up TenantConfig (correct OkapiURL/OkapiTenant).
 func TestResolveAtLoginWithUsernamePrefix(t *testing.T) {
-	defaultConfig := &config.TenantConfig{Tenant: "default"}
+	defaultConfig := &config.TenantConfig{
+		Tenant:      "default",
+		OkapiURL:    "https://default.example.com",
+		OkapiTenant: "default",
+	}
 
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
 			"default": defaultConfig,
 			"tenant4": {
-				Tenant: "tenant4",
-				SCTenants: []config.SCTenantConfig{
-					{
-						Tenant:           "tenant4",
-						UsernamePrefixes: []string{"lib4_", "test4_"},
-					},
-				},
+				Tenant:      "tenant4",
+				OkapiURL:    "https://tenant4.example.com",
+				OkapiTenant: "tenant4",
+			},
+		},
+		SCTenants: []config.SCTenantConfig{
+			{
+				Tenant:           "tenant4",
+				UsernamePrefixes: []string{"lib4_", "test4_"},
 			},
 		},
 	}
 
 	svc := NewService(cfg)
 
-	// Test matching username prefix
-	tenant, err := svc.ResolveAtLogin(context.Background(), "lib4_john", "", "LIB", defaultConfig)
+	// Matching prefix resolves to the correct TenantConfig — not the parent's.
+	result, err := svc.ResolveAtLogin(context.Background(), "lib4_john", "", defaultConfig)
 	if err != nil {
 		t.Fatalf("ResolveAtLogin() error = %v", err)
 	}
-
-	if tenant.Tenant != "tenant4" {
-		t.Errorf("Expected tenant4 for username lib4_john, got '%s'", tenant.Tenant)
+	if result.Tenant != "tenant4" {
+		t.Errorf("Expected tenant4 for username lib4_john, got '%s'", result.Tenant)
+	}
+	if result.OkapiURL != "https://tenant4.example.com" {
+		t.Errorf("Expected OkapiURL 'https://tenant4.example.com', got '%s'", result.OkapiURL)
+	}
+	if result.OkapiTenant != "tenant4" {
+		t.Errorf("Expected OkapiTenant 'tenant4', got '%s'", result.OkapiTenant)
 	}
 
-	// Test non-matching username
-	tenant, err = svc.ResolveAtLogin(context.Background(), "john", "", "LIB", defaultConfig)
+	// Non-matching username falls back to default.
+	result, err = svc.ResolveAtLogin(context.Background(), "john", "", defaultConfig)
 	if err != nil {
 		t.Fatalf("ResolveAtLogin() error = %v", err)
 	}
+	if result.Tenant != "default" {
+		t.Errorf("Expected default for username john, got '%s'", result.Tenant)
+	}
+}
 
-	if tenant.Tenant != "default" {
-		t.Errorf("Expected default for username john, got '%s'", tenant.Tenant)
+// TestResolveAtLoginWithFullUsernamePrefix tests that a full username used as a usernamePrefixes
+// value (e.g. "main_sip1") matches exactly via strings.HasPrefix semantics.
+func TestResolveAtLoginWithFullUsernamePrefix(t *testing.T) {
+	defaultConfig := &config.TenantConfig{
+		Tenant:      "default",
+		OkapiURL:    "https://default.example.com",
+		OkapiTenant: "default",
+	}
+
+	cfg := &config.Config{
+		Tenants: map[string]*config.TenantConfig{
+			"default": defaultConfig,
+			"main": {
+				Tenant:      "main",
+				OkapiURL:    "https://main.example.com",
+				OkapiTenant: "main",
+			},
+		},
+		SCTenants: []config.SCTenantConfig{
+			{
+				Tenant:           "main",
+				UsernamePrefixes: []string{"main_sip1"},
+			},
+		},
+	}
+
+	svc := NewService(cfg)
+
+	// Exact full username "main_sip1" matches via HasPrefix.
+	result, err := svc.ResolveAtLogin(context.Background(), "main_sip1", "", defaultConfig)
+	if err != nil {
+		t.Fatalf("ResolveAtLogin() error = %v", err)
+	}
+	if result.Tenant != "main" {
+		t.Errorf("Expected 'main' for username main_sip1, got '%s'", result.Tenant)
+	}
+	if result.OkapiURL != "https://main.example.com" {
+		t.Errorf("Expected OkapiURL 'https://main.example.com', got '%s'", result.OkapiURL)
+	}
+
+	// A username that merely contains the prefix as a substring but doesn't start with it
+	// should not match (e.g. "other_main_sip1").
+	result, err = svc.ResolveAtLogin(context.Background(), "other_main_sip1", "", defaultConfig)
+	if err != nil {
+		t.Fatalf("ResolveAtLogin() error = %v", err)
+	}
+	if result.Tenant != "default" {
+		t.Errorf("Expected default for username other_main_sip1, got '%s'", result.Tenant)
+	}
+}
+
+// TestSCTenantUnknownTenantSkipped verifies that an SCTenant referencing a name not present
+// in cfg.Tenants is skipped gracefully — no panic, and no resolver is registered.
+func TestSCTenantUnknownTenantSkipped(t *testing.T) {
+	cfg := &config.Config{
+		Tenants: map[string]*config.TenantConfig{
+			"default": {
+				Tenant:   "default",
+				OkapiURL: "https://default.example.com",
+			},
+		},
+		SCTenants: []config.SCTenantConfig{
+			{
+				Tenant:   "nonexistent",
+				SCSubnet: "10.0.0.0/8",
+				Port:     7000,
+			},
+		},
+	}
+
+	// Must not panic.
+	svc := NewService(cfg)
+
+	// No connect resolvers should have been registered for the unknown tenant.
+	if count := svc.GetResolverCount(PhaseConnect); count != 0 {
+		t.Errorf("Expected 0 connect resolvers for unknown SCTenant, got %d", count)
+	}
+
+	// Resolution still works and returns the default.
+	result, err := svc.ResolveAtConnect(context.Background(), "10.0.0.1", 12345, 7000)
+	if err != nil {
+		t.Fatalf("ResolveAtConnect() error = %v", err)
+	}
+	if result.Tenant != "default" {
+		t.Errorf("Expected default when SCTenant is unknown, got '%s'", result.Tenant)
 	}
 }
 
@@ -301,22 +418,24 @@ func TestGetAllTenants(t *testing.T) {
 	}
 }
 
-// TestGetResolverCount tests getting resolver counts
+// TestGetResolverCount tests getting resolver counts using top-level SCTenants.
 func TestGetResolverCount(t *testing.T) {
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
 			"default": {Tenant: "default"},
 			"tenant1": {
-				Tenant: "tenant1",
-				SCTenants: []config.SCTenantConfig{
-					{
-						Tenant:           "tenant1",
-						SCSubnet:         "192.168.1.0/24",
-						Port:             6444,
-						LocationCodes:    []string{"MAIN"},
-						UsernamePrefixes: []string{"lib1_"},
-					},
-				},
+				Tenant:      "tenant1",
+				OkapiURL:    "https://tenant1.example.com",
+				OkapiTenant: "tenant1",
+			},
+		},
+		SCTenants: []config.SCTenantConfig{
+			{
+				Tenant:           "tenant1",
+				SCSubnet:         "192.168.1.0/24",
+				Port:             6444,
+				LocationCodes:    []string{"MAIN"},
+				UsernamePrefixes: []string{"lib1_"},
 			},
 		},
 	}
@@ -336,20 +455,21 @@ func TestGetResolverCount(t *testing.T) {
 	}
 }
 
-// TestResolverPriority tests that resolvers are sorted by priority
+// TestResolverPriority tests that resolvers are sorted by priority using top-level SCTenants.
 func TestResolverPriority(t *testing.T) {
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
 			"default": {Tenant: "default"},
 			"tenant1": {
-				Tenant: "tenant1",
-				SCTenants: []config.SCTenantConfig{
-					{
-						Tenant:   "tenant1",
-						SCSubnet: "192.168.1.0/24",
-						Port:     6444,
-					},
-				},
+				Tenant:   "tenant1",
+				OkapiURL: "https://tenant1.example.com",
+			},
+		},
+		SCTenants: []config.SCTenantConfig{
+			{
+				Tenant:   "tenant1",
+				SCSubnet: "192.168.1.0/24",
+				Port:     6444,
 			},
 		},
 	}

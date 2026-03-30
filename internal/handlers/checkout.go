@@ -7,6 +7,7 @@ import (
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/protocol"
@@ -24,7 +25,7 @@ type CheckoutHandler struct {
 func NewCheckoutHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *CheckoutHandler {
 	return &CheckoutHandler{
 		BaseHandler: NewBaseHandler(logger, tenantConfig),
-		logger:      logger,
+		logger:      logger.With(logging.TypeField(logging.TypeApplication)),
 	}
 }
 
@@ -34,7 +35,6 @@ func (h *CheckoutHandler) Handle(ctx context.Context, msg *parser.Message, sessi
 
 	// Validate required fields
 	if err := h.validateRequiredFields(msg, map[parser.FieldCode]string{
-		parser.InstitutionID:    "Institution ID",
 		parser.PatronIdentifier: "Patron Identifier",
 		parser.ItemIdentifier:   "Item Identifier",
 	}); err != nil {
@@ -47,6 +47,16 @@ func (h *CheckoutHandler) Handle(ctx context.Context, msg *parser.Message, sessi
 	patronIdentifier := msg.GetField(parser.PatronIdentifier)
 	itemIdentifier := msg.GetField(parser.ItemIdentifier)
 	patronPassword := msg.GetField(parser.PatronPassword)
+
+	// Get service point UUID from session (CP field set at LOGIN) — not from AO
+	servicePointID := session.GetLocationCode()
+	if servicePointID == "" {
+		h.logger.Error("Checkout failed: service point ID (CP field) is required but not set in session",
+			zap.String("patron_identifier", patronIdentifier),
+			zap.String("item_identifier", itemIdentifier),
+		)
+		return h.buildCheckoutResponse(false, institutionID, patronIdentifier, itemIdentifier, itemIdentifier, time.Time{}, msg, session, "Checkout failed: service point not configured"), nil
+	}
 
 	h.logger.Info("Checkout request",
 		zap.String("institution_id", institutionID),
@@ -109,7 +119,7 @@ func (h *CheckoutHandler) Handle(ctx context.Context, msg *parser.Message, sessi
 	checkoutReq := folio.CheckoutRequest{
 		ItemBarcode:    itemIdentifier,
 		UserBarcode:    patronIdentifier,
-		ServicePointID: institutionID,
+		ServicePointID: servicePointID,
 		LoanDate:       time.Now().Format(time.RFC3339),
 	}
 

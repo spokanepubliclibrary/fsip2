@@ -70,14 +70,16 @@ See See [documentation/field_mapping.md](documentation/field_mapping.md) for com
 - Multi-source config loading (file, HTTP, S3)
 - Hot-reload support (on restart)
 - Per-tenant configuration
+- Vendorization (single service, variable message support)
 - Configurable message delimiters (CR, LF, CRLF)
 - Character set support (IBM850, ISO-8859-1, UTF-8)
 
-### Multi-Tenancy
+### Multi-Tenancy or Vendor Customization
 - IP/subnet-based resolution
 - Port-based resolution
 - Location code resolution
-- Username prefix resolution
+- Username prefix (or full username) resolution
+  - Can be used for config vendorization/customization
 
 ### Security
 - TLS/SSL support
@@ -90,35 +92,35 @@ See See [documentation/field_mapping.md](documentation/field_mapping.md) for com
 All permission required for fsip2:
 
 ```
-    circulation.check-in-by-barcode.post
-    circulation.check-out-by-barcode.post
-    circulation.requests.collection.get
-    search.instances.collection.get
-    circulation.loans.collection.get
-    configuration.entries.collection.get
-    configuration.entries.item.get
-    manualblocks.collection.get
-    manualblocks.item.get
-    accounts.collection.get
-    accounts.item.get
-    users.collection.get
-    users.item.get
-    patron-blocks.automated-patron-blocks.collection.get
-    inventory.items.collection.get
-    circulation.renew-by-barcode.post
-    usergroups.collection.get
-    users-bl.item.get
-    usergroups.item.get
-    usergroups.collection.get
-    inventory-storage.holdings.item.get
-    inventory-storage.service-points.item.get
-    inventory.instances.item.get
-    feefines.collection.get
-    patron-pin.validate
-    accounts.pay.post
-    circulation.renew-by-id.post
-    inventory.items.item.get
-	  users.item.put (optional, see rollingRenewals feature for details)
+			"accounts.collection.get",
+			"accounts.item.get",
+			"accounts.pay.post",
+			"automated-patron-blocks.collection.get",
+			"circulation.check-in-by-barcode.post",
+			"circulation.check-out-by-barcode.post",
+			"circulation.loans.collection.get",
+			"circulation.renew-by-barcode.post",
+			"circulation.renew-by-id.post",
+			"circulation.requests.collection.get",
+			"configuration.entries.collection.get",
+			"configuration.entries.item.get",
+			"feefines.collection.get",
+			"inventory.instances.item.get",
+			"inventory.items.collection.get",
+			"inventory.items.item.get",
+			"inventory-storage.holdings.item.get",
+			"inventory-storage.service-points.item.get",
+			"manualblocks.collection.get",
+			"manualblocks.item.get",
+			"patron-pin.validate",
+			"search.instances.collection.get",
+			"usergroups.collection.get",
+			"usergroups.collection.get",
+			"usergroups.item.get",
+			"users.collection.get",
+			"users.item.get",
+			"users-bl.item.get",
+				"users.item.put" (optional, see rollingRenewals feature for details)
 ```
 
 ### Monitoring
@@ -163,7 +165,31 @@ tenantConfigSources:
     path: ./tenant-config.yaml
 ```
 
+Create a tenant configuration file (e.g., `tenant-config.yaml`):
+
+```yaml
+# All tenants must be declared under a top-level "tenants:" list.
+# A single file can define any number of tenants.
+tenants:
+  - tenant: diku
+    okapiUrl: https://okapi-diku.example.com
+    okapiTenant: diku
+    charset: UTF-8
+    logLevel: Patron
+    timezone: America/New_York
+
+  - tenant: lib2
+    okapiUrl: https://okapi-lib2.example.com
+    okapiTenant: lib2
+    charset: IBM850
+    logLevel: Patron
+    timezone: America/Chicago
+```
+
+
 See [documentation/examples/](documentation/examples/) for complete configuration examples.
+
+> **Multi-tenant routing**: To route connections from different self-check devices or services (AMH vs PC management vs. Overdrive) to different tenants or configurations, add an `scTenants:` top-level key to your `tenant-config.yaml`. See [Multi-Tenant Setup](#multi-tenant-setup) below for details.
 
 ### Running
 
@@ -556,7 +582,7 @@ This separation ensures fast feedback during development while maintaining compr
 ### Key Features Tested
 
 - **Token Expiration & Refresh**: Automatic detection and refresh of expired FOLIO authentication tokens
-- **Multi-Tenant Resolution**: IP-based, port-based, and username-prefix tenant routing
+- **Multi-Tenant Resolution**: IP-based, port-based, service point, and username-prefix tenant/configuration routing
 - **SIP2 Protocol**: All 13 message types with field validation
 - **FOLIO Integration**: API client with retry logic and error handling
 - **Configuration**: Hot-reload, multi-source config loading (file, HTTP, S3)
@@ -655,12 +681,13 @@ Available metrics:
 
 ### Bootstrap Configuration
 
-- `port`: SIP2 server port (default: 6443)
 - `okapiUrl`: FOLIO Okapi base URL
 - `healthCheckPort`: Health check HTTP port (default: 8081)
 - `tokenCacheCapacity`: Maximum cached tokens (default: 100)
 - `tokenCacheTTL`: Token cache time-to-live with automatic expiration validation
 - `scanPeriod`: Config reload interval in ms (default: 300000)
+- `port`: SIP2 server port (default: 6443)
+  - Additional ports added if specified in scTenants (see section below)
 
 ### Tenant Configuration
 
@@ -729,13 +756,71 @@ See [documentation/configuration.md](documentation/configuration.md) for complet
 
 ## Multi-Tenant Setup
 
-FSIP2 supports multiple tenants resolved by:
-- Client IP address (CIDR ranges)
-- Connection port
-- SIP2 location code
-- Username prefix
+FSIP2 can serve multiple FOLIO tenants or configurations from the same FOLIO tenant from a single process. Each incoming SIP2 connection is matched to a tenant/config using routing rules defined in `scTenants:`, a top-level key in `tenant-config.yaml` that sits alongside the `tenants:` list.
 
-See [documentation/multi-tenant.md](documentation/multi-tenant.md) for setup guide.
+### How routing works
+
+Rules are evaluated in declaration order; the **first match wins**. If no rule matches, the connection falls back to the tenant whose port matches `port:` in `basic.yaml` (the bootstrap config). That port is always bound and acts as the default.
+
+### Routing properties
+
+Each entry under `scTenants:` names a `tenant:` (must match an entry in `tenants:`) and one or more of the following routing properties. A single entry may carry multiple properties — all must match for that entry to fire.
+
+| Property | Type | Description |
+|---|---|---|
+| `port` | integer | Additional TCP port. The server opens a separate listener for every unique port declared across all `scTenants` entries. Connections arriving on this port are routed to the named tenant. |
+| `scSubnet` | string (IPv4 CIDR) | Routes connections whose source IP falls within the given subnet (e.g. `192.168.10.0/24`). |
+| `usernamePrefixes` | list of strings | Matched at login time using `strings.HasPrefix`. Each element is a prefix string; a full username is a valid value and will match that account exactly. |
+| `locationCodes` | list of strings (UUIDs) | Service point UUIDs sent by the self-check terminal in the CP field at login. Matched at login time against the list. |
+
+#### Vendor/service customization
+FSIP2 is an À la carte service. Using the scTenants rules, an institution can define what configuration to serve based on any of the above rules (all connecting to the same okapi FOLIO tenant/instance). An example might be entering the full username(s) into the prefix list to serve specific configurations that only provide Patron responses (for digital lending) where no circulation or fee/fine payments are required and rolling renewals are not offered. Specific fields can be added/removed from the 63/64 SIP response based on vendor needs. Meanwhile, the fallback tenant/configuration might be "all messages/fields enabled" that most selfchecks will use. 
+
+### Default (fallback) tenant
+
+The `port:` value in `basic.yaml` is always bound. Any connection that does not match a rule in `scTenants:` is handled by whichever tenant entry in `tenants:` corresponds to that port — effectively making it the default tenant.
+
+### Example
+
+```yaml
+# tenant-config.yaml
+
+tenants:
+  - tenant: main
+    okapiUrl: https://okapi-main.example.com
+    okapiTenant: main
+    charset: UTF-8
+
+  - tenant: fallback # the "All messages/fields enabled" SIP service
+    okapiUrl: https://okapi-main.example.com
+    okapiTenant: main
+    charset: UTF-8
+  
+  - tenant: institutionB # Entirely different FOLIO tenant
+    okapiUrl: https://okapi-institutionB.example.com
+    okapiTenant: institutionB
+    charset: UTF-8
+
+# scTenants: top-level key, sibling to tenants:
+# Rules are evaluated in order; first match wins.
+scTenants:
+  # Route connections arriving on port 6444 to the "branch" tenant.
+  - tenant: fallback
+    port: 6444
+
+  # Route logins whose username starts with "branch_" or equals "branch_sip1"
+  # (full username is a valid prefix value) to the "branch" tenant.
+  - tenant: main
+    usernamePrefixes:
+      - "branch_"
+      - "branch_sip1"   # full username — matches exactly via strings.HasPrefix
+
+  # Route connections from the self-check kiosk subnet to the "main" tenant.
+  - tenant: institutionB
+    port: 7443
+```
+
+> Connections on the `port:` in `basic.yaml` (default `6443`) that do not match any rule above continue to be served by the default tenant.
 
 ## Troubleshooting
 

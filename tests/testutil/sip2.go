@@ -6,8 +6,12 @@ import "fmt"
 const testSIP2DateTime = "20250110    081500"
 
 // NewLoginMessage builds a SIP2 Login (93) message.
-func NewLoginMessage(username, password string) string {
-	return fmt.Sprintf("9300|CN%s|CO%s\r", username, password)
+// locationCode is the CP field value (service point UUID); pass "" to omit CP.
+func NewLoginMessage(username, password, locationCode string) string {
+	if locationCode == "" {
+		return fmt.Sprintf("9300|CN%s|CO%s\r", username, password)
+	}
+	return fmt.Sprintf("9300|CN%s|CO%s|CP%s\r", username, password, locationCode)
 }
 
 // NewPatronStatusMessage builds a SIP2 Patron Status (23) message.

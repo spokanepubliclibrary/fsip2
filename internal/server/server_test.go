@@ -218,9 +218,12 @@ func TestServerStartStop(t *testing.T) {
 		t.Error("Server should be running after Start()")
 	}
 
-	// Verify listener is created
-	if server.listener == nil {
-		t.Error("Server listener should be created")
+	// Verify at least one listener is created (bootstrap listener)
+	server.mu.RLock()
+	listenerCount := len(server.listeners)
+	server.mu.RUnlock()
+	if listenerCount == 0 {
+		t.Error("Server should have at least one listener after Start()")
 	}
 
 	// Stop server
@@ -401,7 +404,7 @@ func TestServerShutdownTimeout(t *testing.T) {
 
 	// Create a mock listener to avoid nil pointer
 	listener, _ := net.Listen("tcp", "127.0.0.1:0")
-	server.listener = listener
+	server.listeners = append(server.listeners, listener)
 	defer listener.Close()
 
 	// Manually set running state
@@ -630,7 +633,10 @@ func TestServerStart_TLSEnabled(t *testing.T) {
 	// Give server time to start and create the TLS listener
 	time.Sleep(100 * time.Millisecond)
 	require.True(t, srv.IsRunning(), "server should be running after Start()")
-	require.NotNil(t, srv.listener, "TLS listener should be created")
+	srv.mu.RLock()
+	tlsListenerCount := len(srv.listeners)
+	srv.mu.RUnlock()
+	require.Greater(t, tlsListenerCount, 0, "TLS listener should be created")
 
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer stopCancel()
@@ -685,13 +691,17 @@ func TestServerStart_AcceptsConnection(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Start(ctx) }()
 
-	// Wait for server to be running AND listener to be assigned
+	// Wait for server to be running AND at least one listener to be assigned
 	require.Eventually(t, func() bool {
-		return srv.IsRunning() && srv.listener != nil
+		srv.mu.RLock()
+		defer srv.mu.RUnlock()
+		return srv.IsRunning() && len(srv.listeners) > 0
 	}, 2*time.Second, 10*time.Millisecond, "server did not start in time")
 
-	// Dial the server — exercises the connection-accepting goroutine
-	addr := srv.listener.Addr().String()
+	// Dial the bootstrap listener (first in slice)
+	srv.mu.RLock()
+	addr := srv.listeners[0].Addr().String()
+	srv.mu.RUnlock()
 	conn, dialErr := net.Dial("tcp", addr)
 	require.NoError(t, dialErr)
 	conn.Close()
@@ -750,5 +760,212 @@ func TestServerHandlerRegistrationRace(t *testing.T) {
 
 	if handlerCount == 0 {
 		t.Error("No handlers were registered")
+	}
+}
+
+// TestMultiListener_DistinctSCTenantPorts verifies that Start() binds 1 + N listeners
+// when cfg.SCTenants contains N entries with distinct ports different from cfg.Port.
+func TestMultiListener_DistinctSCTenantPorts(t *testing.T) {
+	// Reserve two ephemeral ports so we can hand them to the server config.
+	ln1, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port1 := ln1.Addr().(*net.TCPAddr).Port
+	ln1.Close()
+
+	ln2, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port2 := ln2.Addr().(*net.TCPAddr).Port
+	ln2.Close()
+
+	cfg := &config.Config{
+		Host:     "127.0.0.1",
+		Port:     0, // bootstrap: OS-assigned
+		OkapiURL: "https://folio.example.com",
+		SCTenants: []config.SCTenantConfig{
+			{Port: port1},
+			{Port: port2},
+		},
+	}
+	logger, _ := zap.NewDevelopment()
+	srv, err := NewServer(cfg, logger)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	// Wait for the server to bind all listeners.
+	require.Eventually(t, func() bool {
+		srv.mu.RLock()
+		defer srv.mu.RUnlock()
+		return srv.IsRunning() && len(srv.listeners) == 3
+	}, 2*time.Second, 10*time.Millisecond, "expected 3 listeners (bootstrap + 2 SCTenant ports)")
+
+	srv.mu.RLock()
+	got := len(srv.listeners)
+	srv.mu.RUnlock()
+	assert.Equal(t, 3, got, "expected 1 bootstrap + 2 SCTenant listeners")
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopCancel()
+	require.NoError(t, srv.Stop(stopCtx))
+	cancel()
+
+	select {
+	case startErr := <-errCh:
+		assert.True(t, startErr == nil || errors.Is(startErr, context.Canceled),
+			"unexpected Start() error: %v", startErr)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start() did not return after Stop()")
+	}
+}
+
+// TestMultiListener_DuplicatePortNotBound verifies that when cfg.SCTenants declares
+// a port equal to cfg.Port, no duplicate listener is created (still only 1 listener).
+func TestMultiListener_DuplicatePortNotBound(t *testing.T) {
+	cfg := &config.Config{
+		Host:     "127.0.0.1",
+		Port:     0, // bootstrap port — will be OS-assigned
+		OkapiURL: "https://folio.example.com",
+		// SCTenants with Port 0 matches cfg.Port (0), so uniqueScTenantPorts skips it.
+		SCTenants: []config.SCTenantConfig{
+			{Port: 0},
+		},
+	}
+	logger, _ := zap.NewDevelopment()
+	srv, err := NewServer(cfg, logger)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	require.Eventually(t, func() bool {
+		return srv.IsRunning()
+	}, 2*time.Second, 10*time.Millisecond, "server did not start")
+
+	srv.mu.RLock()
+	got := len(srv.listeners)
+	srv.mu.RUnlock()
+	assert.Equal(t, 1, got, "duplicate SCTenant port must not create an extra listener")
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopCancel()
+	require.NoError(t, srv.Stop(stopCtx))
+	cancel()
+
+	select {
+	case startErr := <-errCh:
+		assert.True(t, startErr == nil || errors.Is(startErr, context.Canceled),
+			"unexpected Start() error: %v", startErr)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start() did not return after Stop()")
+	}
+}
+
+// TestMultiListener_NoSCTenants verifies that a config with no SCTenant entries
+// produces exactly one listener (the bootstrap port).
+func TestMultiListener_NoSCTenants(t *testing.T) {
+	cfg := &config.Config{
+		Host:     "127.0.0.1",
+		Port:     0,
+		OkapiURL: "https://folio.example.com",
+		// SCTenants deliberately absent.
+	}
+	logger, _ := zap.NewDevelopment()
+	srv, err := NewServer(cfg, logger)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	require.Eventually(t, func() bool {
+		return srv.IsRunning()
+	}, 2*time.Second, 10*time.Millisecond, "server did not start")
+
+	srv.mu.RLock()
+	got := len(srv.listeners)
+	srv.mu.RUnlock()
+	assert.Equal(t, 1, got, "no SCTenants → exactly 1 bootstrap listener expected")
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopCancel()
+	require.NoError(t, srv.Stop(stopCtx))
+	cancel()
+
+	select {
+	case startErr := <-errCh:
+		assert.True(t, startErr == nil || errors.Is(startErr, context.Canceled),
+			"unexpected Start() error: %v", startErr)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start() did not return after Stop()")
+	}
+}
+
+// TestMultiListener_StopClosesAllListeners verifies that Stop() closes every open
+// listener without error, and that subsequent Accept() calls fail.
+func TestMultiListener_StopClosesAllListeners(t *testing.T) {
+	// Reserve two ephemeral ports for SCTenant listeners.
+	ln1, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port1 := ln1.Addr().(*net.TCPAddr).Port
+	ln1.Close()
+
+	ln2, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port2 := ln2.Addr().(*net.TCPAddr).Port
+	ln2.Close()
+
+	cfg := &config.Config{
+		Host:     "127.0.0.1",
+		Port:     0,
+		OkapiURL: "https://folio.example.com",
+		SCTenants: []config.SCTenantConfig{
+			{Port: port1},
+			{Port: port2},
+		},
+	}
+	logger, _ := zap.NewDevelopment()
+	srv, err := NewServer(cfg, logger)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	require.Eventually(t, func() bool {
+		srv.mu.RLock()
+		defer srv.mu.RUnlock()
+		return srv.IsRunning() && len(srv.listeners) == 3
+	}, 2*time.Second, 10*time.Millisecond, "expected 3 listeners before Stop()")
+
+	// Snapshot listener references before Stop() clears them.
+	srv.mu.RLock()
+	snapshot := make([]net.Listener, len(srv.listeners))
+	copy(snapshot, srv.listeners)
+	srv.mu.RUnlock()
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopCancel()
+	require.NoError(t, srv.Stop(stopCtx), "Stop() must not return an error")
+	cancel()
+
+	// Every snapshotted listener must now be closed (Accept returns an error).
+	for i, ln := range snapshot {
+		_, acceptErr := ln.Accept()
+		assert.Error(t, acceptErr, "listener[%d] should be closed after Stop()", i)
+	}
+
+	select {
+	case startErr := <-errCh:
+		assert.True(t, startErr == nil || errors.Is(startErr, context.Canceled),
+			"unexpected Start() error: %v", startErr)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start() did not return after Stop()")
 	}
 }

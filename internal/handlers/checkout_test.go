@@ -62,13 +62,6 @@ func TestCheckoutHandler_MissingRequiredFields(t *testing.T) {
 				string(parser.PatronIdentifier): "123456",
 			},
 		},
-		{
-			name: "Missing institution",
-			fields: map[string]string{
-				string(parser.PatronIdentifier): "123456",
-				string(parser.ItemIdentifier):   "ITEM001",
-			},
-		},
 	}
 
 	ctx := context.Background()

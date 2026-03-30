@@ -36,8 +36,9 @@ func createTestReloader(t *testing.T, tenantYAML string, onChangeCallback func(*
 }
 
 const reloaderTenantYAML = `
-tenant: reloader-test
-okapiUrl: http://localhost:9130
+tenants:
+  - tenant: reloader-test
+    okapiUrl: http://localhost:9130
 `
 
 func TestNewReloader(t *testing.T) {
@@ -216,8 +217,9 @@ func TestReloader_OnChangeCallback(t *testing.T) {
 	}
 
 	updatedYAML := `
-tenant: reloader-test
-okapiUrl: http://updated.example.com
+tenants:
+  - tenant: reloader-test
+    okapiUrl: http://updated.example.com
 `
 	if err := os.WriteFile(tenantFile, []byte(updatedYAML), 0644); err != nil {
 		t.Fatalf("Failed to update tenant file: %v", err)
@@ -234,7 +236,7 @@ okapiUrl: http://updated.example.com
 
 func TestReloader_TriggerReload_DetectsModifiedTenant(t *testing.T) {
 	// Use a YAML with explicit messageDelimiter to trigger compareFields/escapeDelimiter
-	initialYAML := "tenant: change-test\nokapiUrl: http://initial.example.com\nmessageDelimiter: INIT\n"
+	initialYAML := "tenants:\n  - tenant: change-test\n    okapiUrl: http://initial.example.com\n    messageDelimiter: INIT\n"
 	reloader, tenantFile := createTestReloader(t, initialYAML, nil)
 
 	// Start to initialize loaders
@@ -253,7 +255,7 @@ func TestReloader_TriggerReload_DetectsModifiedTenant(t *testing.T) {
 	}
 
 	// Modify the tenant - change okapiUrl and messageDelimiter
-	updatedYAML := "tenant: change-test\nokapiUrl: http://updated.example.com\nmessageDelimiter: UPDT\n"
+	updatedYAML := "tenants:\n  - tenant: change-test\n    okapiUrl: http://updated.example.com\n    messageDelimiter: UPDT\n"
 	if err := os.WriteFile(tenantFile, []byte(updatedYAML), 0644); err != nil {
 		t.Fatalf("Failed to update tenant file: %v", err)
 	}
@@ -274,7 +276,7 @@ func TestReloader_TriggerReload_DetectsModifiedTenant(t *testing.T) {
 }
 
 func TestReloader_TriggerReload_DetectsRemovedTenant(t *testing.T) {
-	initialYAML := "tenant: tenant-a\nokapiUrl: http://a.example.com\n"
+	initialYAML := "tenants:\n  - tenant: tenant-a\n    okapiUrl: http://a.example.com\n"
 	reloader, tenantFile := createTestReloader(t, initialYAML, nil)
 
 	// Start to initialize loaders
@@ -290,7 +292,7 @@ func TestReloader_TriggerReload_DetectsRemovedTenant(t *testing.T) {
 	}
 
 	// Change the file to a different tenant
-	updatedYAML := "tenant: tenant-b\nokapiUrl: http://b.example.com\n"
+	updatedYAML := "tenants:\n  - tenant: tenant-b\n    okapiUrl: http://b.example.com\n"
 	if err := os.WriteFile(tenantFile, []byte(updatedYAML), 0644); err != nil {
 		t.Fatalf("Failed to update tenant file: %v", err)
 	}
@@ -307,5 +309,134 @@ func TestReloader_TriggerReload_DetectsRemovedTenant(t *testing.T) {
 	}
 	if _, ok := cfg.Tenants["tenant-b"]; !ok {
 		t.Error("Expected 'tenant-b' to be added")
+	}
+}
+
+func TestReloader_TriggerReload_ListFormat_MultiTenant(t *testing.T) {
+	yaml := `
+tenants:
+  - tenant: alpha
+    okapiUrl: http://alpha.example.com
+  - tenant: beta
+    okapiUrl: http://beta.example.com
+`
+	reloader, _ := createTestReloader(t, yaml, nil)
+
+	ctx := context.Background()
+	if err := reloader.Start(ctx); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	reloader.Stop()
+
+	if err := reloader.TriggerReload(); err != nil {
+		t.Fatalf("TriggerReload() failed: %v", err)
+	}
+
+	cfg := reloader.GetCurrentConfig()
+	if _, ok := cfg.Tenants["alpha"]; !ok {
+		t.Error("Expected 'alpha' tenant to be loaded")
+	}
+	if _, ok := cfg.Tenants["beta"]; !ok {
+		t.Error("Expected 'beta' tenant to be loaded")
+	}
+}
+
+func TestReloader_TriggerReload_ListFormat_AddTenant(t *testing.T) {
+	initialYAML := "tenants:\n  - tenant: alpha\n    okapiUrl: http://alpha.example.com\n"
+	reloader, tenantFile := createTestReloader(t, initialYAML, nil)
+
+	ctx := context.Background()
+	if err := reloader.Start(ctx); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	reloader.Stop()
+
+	if err := reloader.TriggerReload(); err != nil {
+		t.Fatalf("First TriggerReload() failed: %v", err)
+	}
+	if _, ok := reloader.GetCurrentConfig().Tenants["alpha"]; !ok {
+		t.Fatal("Expected 'alpha' after first reload")
+	}
+
+	updatedYAML := "tenants:\n  - tenant: alpha\n    okapiUrl: http://alpha.example.com\n  - tenant: beta\n    okapiUrl: http://beta.example.com\n"
+	if err := os.WriteFile(tenantFile, []byte(updatedYAML), 0644); err != nil {
+		t.Fatalf("Failed to update tenant file: %v", err)
+	}
+
+	if err := reloader.TriggerReload(); err != nil {
+		t.Fatalf("Second TriggerReload() failed: %v", err)
+	}
+
+	cfg := reloader.GetCurrentConfig()
+	if _, ok := cfg.Tenants["alpha"]; !ok {
+		t.Error("Expected 'alpha' still present after adding beta")
+	}
+	if _, ok := cfg.Tenants["beta"]; !ok {
+		t.Error("Expected 'beta' to be added on second reload")
+	}
+}
+
+func TestReloader_TriggerReload_ListFormat_RemoveTenant(t *testing.T) {
+	initialYAML := "tenants:\n  - tenant: alpha\n    okapiUrl: http://alpha.example.com\n  - tenant: beta\n    okapiUrl: http://beta.example.com\n"
+	reloader, tenantFile := createTestReloader(t, initialYAML, nil)
+
+	ctx := context.Background()
+	if err := reloader.Start(ctx); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	reloader.Stop()
+
+	if err := reloader.TriggerReload(); err != nil {
+		t.Fatalf("First TriggerReload() failed: %v", err)
+	}
+	if _, ok := reloader.GetCurrentConfig().Tenants["alpha"]; !ok {
+		t.Fatal("Expected 'alpha' after first reload")
+	}
+	if _, ok := reloader.GetCurrentConfig().Tenants["beta"]; !ok {
+		t.Fatal("Expected 'beta' after first reload")
+	}
+
+	updatedYAML := "tenants:\n  - tenant: alpha\n    okapiUrl: http://alpha.example.com\n"
+	if err := os.WriteFile(tenantFile, []byte(updatedYAML), 0644); err != nil {
+		t.Fatalf("Failed to update tenant file: %v", err)
+	}
+
+	changeCalled := false
+	reloader.onChange = func(cfg *Config) { changeCalled = true }
+
+	if err := reloader.TriggerReload(); err != nil {
+		t.Fatalf("Second TriggerReload() failed: %v", err)
+	}
+
+	cfg := reloader.GetCurrentConfig()
+	if _, ok := cfg.Tenants["alpha"]; !ok {
+		t.Error("Expected 'alpha' to remain")
+	}
+	if _, ok := cfg.Tenants["beta"]; ok {
+		t.Error("Expected 'beta' to be removed")
+	}
+	if !changeCalled {
+		t.Error("Expected onChange to be called after removing a tenant")
+	}
+}
+
+func TestReloader_TriggerReload_FlatFormat_LogsError(t *testing.T) {
+	// Old flat format (no "tenants:" key) must be rejected; the reloader must not panic
+	// and cfg.Tenants must remain unchanged (empty).
+	flatYAML := "tenant: bad-tenant\nokapiUrl: http://bad.example.com\n"
+	reloader, _ := createTestReloader(t, flatYAML, nil)
+
+	ctx := context.Background()
+	if err := reloader.Start(ctx); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	reloader.Stop()
+
+	// TriggerReload may return an error or swallow it internally; either way it must not panic.
+	_ = reloader.TriggerReload()
+
+	cfg := reloader.GetCurrentConfig()
+	if len(cfg.Tenants) != 0 {
+		t.Errorf("Expected Tenants map to remain empty after flat-format load, got %v", cfg.Tenants)
 	}
 }

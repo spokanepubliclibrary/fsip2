@@ -17,6 +17,7 @@ This document provides a comprehensive reference for all supported SIP2 messages
 - [Message 93/94 - Login](#message-9394---login)
 - [Message 97/96 - Request Resend](#message-9796---request-resend)
 - [Message 99/98 - SC/ACS Status](#message-9998---scacs-status)
+- [Log Field Reference](#log-field-reference)
 
 ---
 
@@ -32,10 +33,15 @@ This document provides a comprehensive reference for all supported SIP2 messages
 | No Block | Fixed | Yes | Checkout blocked flag (Y/N) | Request message |
 | Transaction Date | Fixed | Yes | Date/time of transaction | Request message |
 | Return Date | Fixed | Yes | Date/time of return | Request message |
-| Current Location | AP | Yes | Service point ID for checkin | Request message |
+| Current Location | AP | **No** | Echo only — value is returned in the 10 response AP field if provided; **not used** for FOLIO service point lookup | Request message (optional) |
 | Institution ID | AO | Yes | Institution identifier | Request message |
 | Item Identifier | AB | Yes | Item barcode | Request message |
 | Terminal Password | AC | No | Terminal password | Request message |
+
+> **Service Point Source:** The service point UUID used for the FOLIO checkin API call is taken
+> from the CP (Location Code) field sent during Login (93), stored in the session. If CP was not
+> provided at login, the checkin will fail. The AP field in the 09 request is ignored for service
+> point purposes but is echoed back in the 10 response if present.
 
 ### Response Fields (10)
 
@@ -49,7 +55,7 @@ This document provides a comprehensive reference for all supported SIP2 messages
 | Institution ID | AO | Yes | No | Institution identifier | Request echo |
 | Item Identifier | AB | Yes | No | Item barcode | Request echo |
 | Permanent Location | AQ | Yes | No | Permanent location name | Item → Location → Name |
-| Current Location | AP | Yes | No | Current location (service point) | Request echo |
+| Current Location | AP | Yes | No | Current location (service point) | Request echo (AP value from 09 request, if provided) |
 | Title Identifier | AJ | Yes | No | Instance title (truncated to 60 chars) | Item → Holdings → Instance → Title |
 | Media Type | CK | Yes | No | SIP2 media type code | Item → MaterialType → Mapped |
 | Material Type | CH | Yes | No | FOLIO material type name | Item → MaterialType → Name |
@@ -89,7 +95,7 @@ supportedMessages:
 
 ### Data Flow
 
-1. Validate required fields (AO, AB, AP)
+1. Validate required field (AB) and CP from session (set at login); AO and AP are optional echo fields
 2. Call FOLIO Checkin API (`/circulation/check-in-by-barcode`)
 3. Fetch item details by barcode (parallel goroutines):
    - Item → Location (for AQ field)
@@ -120,7 +126,7 @@ Most Automated Material Handlers (AMH) work with top-down rules. Here is an exam
   - `patron`: Resolve as "Returned by patron"
   - `library`: Resolve as "Found by library"
   - `none`: Block checkin with error message
-- **Service Point Requirement**: AP field (Current Location) is required for FOLIO checkin
+- **Service Point Requirement**: CP field (Location Code) sent at login is required; it must contain the FOLIO service point UUID. If absent from the session, checkin fails. AP (if sent in the 09 request) is echoed in the 10 response unchanged.
 - **Parallel Data Fetching**: Uses goroutines to fetch independent data in parallel for performance
 
 ---
@@ -1164,8 +1170,60 @@ Supports multiple sub-tenants with different configurations based on subnet, por
 
 ---
 
+## Log Field Reference
+
+This section documents the structured log fields introduced to provide consistent, machine-readable log entries across all FSIP2 components.
+
+### `type` Field
+
+Every log entry emitted by FSIP2 includes a `"type"` field that identifies the origin and nature of the entry. This allows log aggregation systems to filter and route entries without parsing free-text messages.
+
+| Value | Meaning | Typical Log Level |
+|---|---|---|
+| `application` | Startup, shutdown, config loading, server lifecycle events, token management | `info` / `warn` / `error` |
+| `sip_request` | Incoming SIP2 message received from a self-service kiosk (protocol boundary) | `info` |
+| `sip_response` | Outgoing SIP2 response sent to a self-service kiosk (protocol boundary) | `info` |
+| `folio_request` | Outbound HTTP call to the FOLIO API | `debug` only |
+| `folio_response` | HTTP response received from the FOLIO API | `debug` only |
+
+**Notes:**
+
+- `sip_request` and `sip_response` entries are emitted exclusively by `logRequest()` and `logResponse()` in `internal/handlers/base.go`. They mark the SIP2 protocol boundary only; handler-internal processing logs (e.g. "Checkout request", "Patron information lookup") are classified as `application`.
+- `folio_request` and `folio_response` entries are emitted by `internal/folio/client.go` inside `doRequestWithCustomAccept()`. They are **always at `debug` level** and will not appear in production deployments running at `info` level or above.
+- Token expiration and token refresh entries (emitted by `internal/folio/auth.go` and `internal/handlers/base.go`) carry `type: "application"` and are **always at `debug` level**.
+
+---
+
+### `session_id` Field
+
+The `session_id` field is a hex-encoded random string generated once per SIP2 connection and carried on every log entry emitted within the lifetime of that connection.
+
+| Property | Detail |
+|---|---|
+| Scope | Handler scope only — present on `sip_request`, `sip_response`, and all handler-internal `application` entries within a session |
+| Format | Lowercase hex string (e.g. `"a3f7c12e"`) |
+| Generation | Generated in `internal/server/connection.go` when a new client connection is accepted |
+| Omission | **Not present** on application-level entries outside a session context (startup, shutdown, server errors) |
+
+Use `session_id` to correlate all SIP2 exchanges and processing steps belonging to a single client connection.
+
+---
+
+### Debug-Only Log Entries Summary
+
+The following entry types will **never appear at `info` level or above**:
+
+| Entry | `type` value | Reason |
+|---|---|---|
+| FOLIO API request details (method, URL, tenant) | `folio_request` | Potentially high volume; sensitive URL detail |
+| FOLIO API response details (status code, bytes) | `folio_response` | Potentially high volume |
+| Token expiration details (expiry time, remaining TTL) | `application` | Operational noise at normal log levels |
+| Token refresh success | `application` | Operational noise at normal log levels |
+
+---
+
 ## Document Version
 
-**Version**: 1.0
-**Last Updated**: 2025-11-25
+**Version**: 1.1
+**Last Updated**: 2026-03-19
 **Maintained By**: FSIP2 Team

@@ -4,7 +4,7 @@
 # SIP2 server port
 port: 6443
 
-# FOLIO Okapi URL (can be overridden per tenant)
+# FOLIO Okapi URL (overridden per tenant)
 okapiUrl: https://okapi.example.com
 
 # HTTP health check port
@@ -20,7 +20,10 @@ scanPeriod: 300000
 logLevel: info
 
 # Tenant configuration sources
-# Configurations will be loaded from these sources in order
+# Configurations will be loaded from these sources in order.
+# Each source file must use the "tenants:" list format — a single source file
+# can define multiple tenants. The flat single-tenant format is not supported.
+# See documentation/examples/tenant-config.yaml for the required file structure.
 tenantConfigSources:
   - type: file
     path: ./documentation/examples/tenant-config.yaml

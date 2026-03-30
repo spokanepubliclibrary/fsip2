@@ -15,10 +15,9 @@ type Session struct {
 	TokenExpiresAt  time.Time // Token expiration time
 	PatronID        string
 	PatronBarcode   string
-	Username        string
-	password        string // Stored for automatic token refresh (Option A)
-	InstitutionID   string
-	LocationCode    string
+	Username     string
+	password     string // Stored for automatic token refresh (Option A)
+	LocationCode string
 	IsAuthenticated bool
 	CreatedAt       time.Time
 	LastActivity    time.Time
@@ -91,13 +90,6 @@ func (s *Session) UpdateActivity() {
 	s.LastActivity = time.Now()
 }
 
-// SetInstitutionID sets the institution ID
-func (s *Session) SetInstitutionID(institutionID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.InstitutionID = institutionID
-}
-
 // SetLocationCode sets the location code
 func (s *Session) SetLocationCode(locationCode string) {
 	s.mu.Lock()
@@ -138,13 +130,6 @@ func (s *Session) GetUsername() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.Username
-}
-
-// GetInstitutionID returns the institution ID
-func (s *Session) GetInstitutionID() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.InstitutionID
 }
 
 // GetLocationCode returns the location code
@@ -228,10 +213,9 @@ func (s *Session) Clone() *Session {
 		TokenExpiresAt:  s.TokenExpiresAt,
 		PatronID:        s.PatronID,
 		PatronBarcode:   s.PatronBarcode,
-		Username:        s.Username,
+		Username:     s.Username,
 		// password intentionally not copied for security
-		InstitutionID:   s.InstitutionID,
-		LocationCode:    s.LocationCode,
+		LocationCode: s.LocationCode,
 		IsAuthenticated: s.IsAuthenticated,
 		CreatedAt:       s.CreatedAt,
 		LastActivity:    s.LastActivity,

@@ -78,8 +78,11 @@ func run(configFile string, logFile string) error {
 
 	// Set auth logger for token expiration debugging (Phase 1.1)
 	folio.SetAuthLogger(logger)
+	// Set client logger for FOLIO HTTP request/response debug logging (Phase 4)
+	folio.SetClientLogger(logger)
 
 	logger.Info("Starting fsip2",
+		logging.TypeField(logging.TypeApplication),
 		zap.String("version", version),
 		zap.Int("port", cfg.Port),
 		zap.String("okapi_url", cfg.OkapiURL),
@@ -93,7 +96,7 @@ func run(configFile string, logFile string) error {
 	healthServer := health.NewServer(cfg.HealthCheckPort, logger)
 	go func() {
 		if err := healthServer.Start(ctx); err != nil {
-			logger.Error("Health check server error", zap.Error(err))
+			logger.Error("Health check server error", logging.TypeField(logging.TypeApplication), zap.Error(err))
 		}
 	}()
 
@@ -118,13 +121,13 @@ func run(configFile string, logFile string) error {
 	// Wait for shutdown signal or error
 	select {
 	case <-sigChan:
-		logger.Info("Received shutdown signal, gracefully stopping...")
+		logger.Info("Received shutdown signal, gracefully stopping...", logging.TypeField(logging.TypeApplication))
 		cancel()
 		if err := sip2Server.Stop(ctx); err != nil {
-			logger.Error("Error during shutdown", zap.Error(err))
+			logger.Error("Error during shutdown", logging.TypeField(logging.TypeApplication), zap.Error(err))
 			return err
 		}
-		logger.Info("Server stopped successfully")
+		logger.Info("Server stopped successfully", logging.TypeField(logging.TypeApplication))
 		return nil
 	case err := <-errChan:
 		if err != nil {

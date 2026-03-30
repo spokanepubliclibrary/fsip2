@@ -24,6 +24,9 @@ type Config struct {
 
 	// Runtime tenant configurations (loaded from sources)
 	Tenants map[string]*TenantConfig `yaml:"-"`
+
+	// Top-level SC tenant configurations (loaded from sources)
+	SCTenants []SCTenantConfig `yaml:"-"`
 }
 
 // ConfigSource represents a source for tenant configuration
@@ -54,9 +57,6 @@ type TenantConfig struct {
 	LogLevel              string `yaml:"logLevel"`
 	OkapiURL              string `yaml:"okapiUrl"`
 	OkapiTenant           string `yaml:"okapiTenant"`
-
-	// Multi-tenant configurations
-	SCTenants []SCTenantConfig `yaml:"scTenants,omitempty"`
 
 	// SIP2 message support
 	SupportedMessages []MessageSupport `yaml:"supportedMessages"`
@@ -195,23 +195,16 @@ func (c *Config) loadTenantConfigs() error {
 			return fmt.Errorf("unsupported config source type: %s", source.Type)
 		}
 
-		tenantCfg, err := loader.Load()
+		tenantCfgs, scTenants, err := loader.Load()
 		if err != nil {
 			return fmt.Errorf("failed to load config from %s: %w", source.Type, err)
 		}
 
-		// Add to tenant map
-		c.Tenants[tenantCfg.Tenant] = tenantCfg
-
-		// Also add SC tenants
-		for _, scTenant := range tenantCfg.SCTenants {
-			if scTenant.Tenant != "" {
-				// Create a copy with overridden tenant name
-				scCfg := *tenantCfg
-				scCfg.Tenant = scTenant.Tenant
-				c.Tenants[scTenant.Tenant] = &scCfg
-			}
+		for _, tenantCfg := range tenantCfgs {
+			c.Tenants[tenantCfg.Tenant] = tenantCfg
 		}
+
+		c.SCTenants = append(c.SCTenants, scTenants...)
 	}
 
 	return nil

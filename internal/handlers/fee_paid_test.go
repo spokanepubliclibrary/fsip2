@@ -11,56 +11,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestFeePaidHandler_Handle_MissingInstitutionID(t *testing.T) {
-	tenantConfig := &config.TenantConfig{
-		Tenant:                "test-library",
-		MessageDelimiter:      "\r",
-		FieldDelimiter:        "|",
-		ErrorDetectionEnabled: true,
-		Charset:               "UTF-8",
-	}
-
-	logger := zap.NewNop()
-	handler := NewFeePaidHandler(logger, tenantConfig)
-	session := types.NewSession("test-session", tenantConfig)
-
-	// Create message without institution ID
-	msg := &parser.Message{
-		Code:           parser.FeePaidRequest,
-		Fields:         make(map[string]string),
-		SequenceNumber: "0",
-	}
-	msg.Fields[string(parser.PatronIdentifier)] = "patron-123"
-	msg.Fields[string(parser.FeeAmount)] = "10.00"
-
-	ctx := context.Background()
-	response, err := handler.Handle(ctx, msg, session)
-
-	// Should not error but return failure response
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	// Response should start with "38" (Fee Paid Response)
-	if !strings.HasPrefix(response, "38") {
-		t.Errorf("Expected fee paid response (38), got: %s", response[:10])
-	}
-
-	// Response should indicate failure (N)
-	if len(response) >= 3 && response[2:3] != "N" {
-		t.Errorf("Expected failed response (N), got: %s", response[2:3])
-	}
-
-	// Verify contains sequence number (AY)
-	if !strings.Contains(response, "AY0") {
-		t.Error("Response should contain sequence number field (AY)")
-	}
-
-	// Verify contains checksum (AZ)
-	if !strings.Contains(response, "AZ") {
-		t.Error("Response should contain checksum field (AZ)")
-	}
-}
 
 func TestFeePaidHandler_Handle_MissingPatronIdentifier(t *testing.T) {
 	tenantConfig := &config.TenantConfig{
@@ -398,14 +348,6 @@ func TestFeePaidHandler_ValidatesAllRequiredFields(t *testing.T) {
 				string(parser.FeeAmount):        "10.00",
 			},
 			expectFailure: false, // Will fail for other reasons (no FOLIO), but passes validation
-		},
-		{
-			name: "Missing institution ID",
-			fields: map[string]string{
-				string(parser.PatronIdentifier): "patron-123",
-				string(parser.FeeAmount):        "10.00",
-			},
-			expectFailure: true,
 		},
 		{
 			name: "Missing patron identifier",

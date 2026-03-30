@@ -12,6 +12,7 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/handlers"
 	"github.com/spokanepubliclibrary/fsip2/internal/helpers"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/metrics"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/internal/tenant"
@@ -23,7 +24,7 @@ import (
 type Server struct {
 	config        *config.Config
 	logger        *zap.Logger
-	listener      net.Listener
+	listeners     []net.Listener
 	tenantService *tenant.Service
 	handlers      map[parser.MessageCode]MessageHandler
 	metrics       *metrics.Metrics
@@ -89,60 +90,40 @@ func (s *Server) RegisterAllHandlers() {
 	s.RegisterHandler(parser.RequestACSResend, handlers.NewResendHandler(s.logger, defaultTenantConfig))
 
 	s.logger.Info("All SIP2 message handlers registered",
+		logging.TypeField(logging.TypeApplication),
 		zap.Int("handler_count", len(s.handlers)),
 	)
 }
 
-// Start starts the SIP2 server
-func (s *Server) Start(ctx context.Context) error {
-	s.mu.Lock()
-	if s.isRunning {
-		s.mu.Unlock()
-		return fmt.Errorf("server is already running")
-	}
-	s.isRunning = true
-	s.mu.Unlock()
-
-	// Create listener
-	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
-
-	var listener net.Listener
-	var err error
-
-	// Check if TLS is enabled
+// bindListener creates a TCP (or TLS) listener for the given address.
+func (s *Server) bindListener(addr string) (net.Listener, error) {
 	if s.config.TLS != nil && s.config.TLS.Enabled {
 		tlsConfig, err := LoadTLSConfig(s.config.TLS.CertFile, s.config.TLS.KeyFile)
 		if err != nil {
-			return fmt.Errorf("failed to load TLS config: %w", err)
+			return nil, fmt.Errorf("failed to load TLS config: %w", err)
 		}
-
-		listener, err = tls.Listen("tcp", addr, tlsConfig)
+		ln, err := tls.Listen("tcp", addr, tlsConfig)
 		if err != nil {
-			return fmt.Errorf("failed to start TLS listener: %w", err)
+			return nil, fmt.Errorf("failed to start TLS listener on %s: %w", addr, err)
 		}
-
-		s.logger.Info("TLS enabled", zap.String("cert", s.config.TLS.CertFile))
-	} else {
-		listener, err = net.Listen("tcp", addr)
-		if err != nil {
-			return fmt.Errorf("failed to start listener: %w", err)
-		}
+		return ln, nil
 	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start listener on %s: %w", addr, err)
+	}
+	return ln, nil
+}
 
-	s.listener = listener
-
-	s.logger.Info("SIP2 server started",
-		zap.String("address", addr),
-		zap.Int("port", s.config.Port),
-	)
-
-	// Accept connections
+// acceptLoop runs the accept loop for a single listener until ctx is cancelled
+// or the listener is closed.
+func (s *Server) acceptLoop(ctx context.Context, ln net.Listener) {
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return
 		default:
-			conn, err := listener.Accept()
+			conn, err := ln.Accept()
 			if err != nil {
 				// Check if server is stopping
 				s.mu.RLock()
@@ -150,10 +131,10 @@ func (s *Server) Start(ctx context.Context) error {
 				s.mu.RUnlock()
 
 				if !running {
-					return nil
+					return
 				}
 
-				s.logger.Error("Failed to accept connection", zap.Error(err))
+				s.logger.Error("Failed to accept connection", logging.TypeField(logging.TypeApplication), zap.Error(err))
 				continue
 			}
 
@@ -175,6 +156,7 @@ func (s *Server) Start(ctx context.Context) error {
 				startTime := time.Now()
 				if err := s.handleConnection(ctx, conn); err != nil {
 					s.logger.Error("Connection error",
+						logging.TypeField(logging.TypeApplication),
 						zap.String("remote", conn.RemoteAddr().String()),
 						zap.Error(err),
 					)
@@ -184,6 +166,77 @@ func (s *Server) Start(ctx context.Context) error {
 			}()
 		}
 	}
+}
+
+// Start starts the SIP2 server
+func (s *Server) Start(ctx context.Context) error {
+	s.mu.Lock()
+	if s.isRunning {
+		s.mu.Unlock()
+		return fmt.Errorf("server is already running")
+	}
+	s.isRunning = true
+	s.mu.Unlock()
+
+	// Always bind the bootstrap port first.
+	bootstrapAddr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
+	bootstrapLn, err := s.bindListener(bootstrapAddr)
+	if err != nil {
+		return err
+	}
+	s.listeners = append(s.listeners, bootstrapLn)
+
+	if s.config.TLS != nil && s.config.TLS.Enabled {
+		s.logger.Info("TLS enabled", logging.TypeField(logging.TypeApplication), zap.String("cert", s.config.TLS.CertFile))
+	}
+	s.logger.Info("SIP2 server started",
+		logging.TypeField(logging.TypeApplication),
+		zap.String("address", bootstrapAddr),
+		zap.Int("port", s.config.Port),
+	)
+
+	// Bind one additional listener per unique SCTenant port.
+	for _, port := range uniqueScTenantPorts(s.config) {
+		addr := fmt.Sprintf("%s:%d", s.config.Host, port)
+		ln, err := s.bindListener(addr)
+		if err != nil {
+			// Close already-bound listeners before returning.
+			for _, l := range s.listeners {
+				_ = l.Close()
+			}
+			s.listeners = nil
+			return err
+		}
+		s.listeners = append(s.listeners, ln)
+		s.logger.Info("SIP2 additional listener started",
+			logging.TypeField(logging.TypeApplication),
+			zap.String("address", addr),
+			zap.Int("port", port),
+		)
+	}
+
+	// Start all accept loops except the last; run the last one on this goroutine.
+	for _, ln := range s.listeners[:len(s.listeners)-1] {
+		ln := ln
+		go s.acceptLoop(ctx, ln)
+	}
+	s.acceptLoop(ctx, s.listeners[len(s.listeners)-1])
+
+	return ctx.Err()
+}
+
+// uniqueScTenantPorts returns the deduplicated set of non-zero SCTenant ports
+// that differ from the bootstrap port.
+func uniqueScTenantPorts(cfg *config.Config) []int {
+	seen := map[int]bool{cfg.Port: true}
+	var ports []int
+	for _, sc := range cfg.SCTenants {
+		if sc.Port > 0 && !seen[sc.Port] {
+			seen[sc.Port] = true
+			ports = append(ports, sc.Port)
+		}
+	}
+	return ports
 }
 
 // handleConnection handles a single client connection
@@ -205,6 +258,7 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) error {
 	}
 
 	s.logger.Info("New connection",
+		logging.TypeField(logging.TypeApplication),
 		zap.String("client_ip", clientIP),
 		zap.Int("client_port", clientPort),
 		zap.Int("server_port", serverPort),
@@ -213,11 +267,12 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) error {
 	// Resolve tenant at CONNECT phase
 	tenantConfig, err := s.tenantService.ResolveAtConnect(ctx, clientIP, clientPort, serverPort)
 	if err != nil {
-		s.logger.Error("Failed to resolve tenant", zap.Error(err))
+		s.logger.Error("Failed to resolve tenant", logging.TypeField(logging.TypeApplication), zap.Error(err))
 		return err
 	}
 
 	s.logger.Info("Tenant resolved",
+		logging.TypeField(logging.TypeApplication),
 		zap.String("tenant", tenantConfig.Tenant),
 		zap.String("client_ip", clientIP),
 	)
@@ -254,12 +309,12 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.isRunning = false
 	s.mu.Unlock()
 
-	s.logger.Info("Stopping SIP2 server...")
+	s.logger.Info("Stopping SIP2 server...", logging.TypeField(logging.TypeApplication))
 
-	// Close listener
-	if s.listener != nil {
-		if err := s.listener.Close(); err != nil {
-			s.logger.Error("Error closing listener", zap.Error(err))
+	// Close all listeners
+	for _, ln := range s.listeners {
+		if err := ln.Close(); err != nil {
+			s.logger.Error("Error closing listener", logging.TypeField(logging.TypeApplication), zap.Error(err))
 		}
 	}
 
@@ -272,14 +327,14 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	select {
 	case <-done:
-		s.logger.Info("All connections closed")
+		s.logger.Info("All connections closed", logging.TypeField(logging.TypeApplication))
 	case <-time.After(30 * time.Second):
-		s.logger.Warn("Timeout waiting for connections to close")
+		s.logger.Warn("Timeout waiting for connections to close", logging.TypeField(logging.TypeApplication))
 	case <-ctx.Done():
-		s.logger.Warn("Context cancelled while waiting for connections")
+		s.logger.Warn("Context cancelled while waiting for connections", logging.TypeField(logging.TypeApplication))
 	}
 
-	s.logger.Info("SIP2 server stopped")
+	s.logger.Info("SIP2 server stopped", logging.TypeField(logging.TypeApplication))
 	return nil
 }
 

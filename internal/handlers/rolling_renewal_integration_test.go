@@ -237,6 +237,8 @@ func TestAttemptRollingRenewal_Integration(t *testing.T) {
 						found = true
 						assert.Equal(t, tt.expectLogLevel, log.Level,
 							"unexpected log level for message %q", log.Message)
+						assert.Equal(t, "application", log.ContextMap()["type"],
+							"rolling renewal log must have type=application")
 						break
 					}
 				}
@@ -291,6 +293,8 @@ func TestAttemptRollingRenewal_PermissionError(t *testing.T) {
 			found = true
 			assert.True(t, log.Level >= zapcore.WarnLevel,
 				"permission error should be WARN or ERROR, got %v", log.Level)
+			assert.Equal(t, "application", log.ContextMap()["type"],
+				"rolling renewal permission-error log must have type=application")
 			break
 		}
 	}
@@ -334,6 +338,8 @@ func TestAttemptRollingRenewal_NoExpirationDate(t *testing.T) {
 		if strings.Contains(log.Message, "not eligible") {
 			found = true
 			assert.Equal(t, zapcore.DebugLevel, log.Level)
+			assert.Equal(t, "application", log.ContextMap()["type"],
+				"rolling renewal not-eligible log must have type=application")
 
 			hasReason := false
 			for _, f := range log.Context {

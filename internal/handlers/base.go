@@ -8,6 +8,7 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/renewal"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
@@ -35,16 +36,16 @@ func NewBaseHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *Base
 		tenantConfig: tenantConfig,
 	}
 	h.newPatronClient = func(s *types.Session) PatronLookup {
-		return folio.NewPatronClient(s.TenantConfig.OkapiURL, s.TenantConfig.Tenant)
+		return folio.NewPatronClient(s.TenantConfig.OkapiURL, s.TenantConfig.OkapiTenant)
 	}
 	h.newCirculationClient = func(s *types.Session) CirculationLookup {
-		return folio.NewCirculationClient(s.TenantConfig.OkapiURL, s.TenantConfig.Tenant)
+		return folio.NewCirculationClient(s.TenantConfig.OkapiURL, s.TenantConfig.OkapiTenant)
 	}
 	h.newInventoryClient = func(s *types.Session) InventoryLookup {
-		return folio.NewInventoryClient(s.TenantConfig.OkapiURL, s.TenantConfig.Tenant)
+		return folio.NewInventoryClient(s.TenantConfig.OkapiURL, s.TenantConfig.OkapiTenant)
 	}
 	h.newFeesClient = func(s *types.Session) FeesOps {
-		return folio.NewFeesClient(s.TenantConfig.OkapiURL, s.TenantConfig.Tenant)
+		return folio.NewFeesClient(s.TenantConfig.OkapiURL, s.TenantConfig.OkapiTenant)
 	}
 	return h
 }
@@ -62,7 +63,7 @@ func (h *BaseHandler) getFolioClient(session *types.Session) (*folio.Client, err
 
 	client := folio.NewClient(
 		session.TenantConfig.OkapiURL,
-		session.TenantConfig.Tenant,
+		session.TenantConfig.OkapiTenant,
 	)
 
 	return client, nil
@@ -87,6 +88,7 @@ func (h *BaseHandler) getAuthenticatedFolioClient(ctx context.Context, session *
 		effectiveTimeRemaining := timeUntilExpiry - (90 * time.Second)
 
 		h.logger.Debug("Token expiration check",
+			logging.TypeField(logging.TypeApplication),
 			zap.String("session_id", session.ID),
 			zap.Bool("is_authenticated", session.IsAuth()),
 			zap.Time("token_expires_at", tokenExpiresAt),
@@ -98,6 +100,7 @@ func (h *BaseHandler) getAuthenticatedFolioClient(ctx context.Context, session *
 
 	if authToken != "" && !isExpired {
 		h.logger.Debug("Using cached authentication token",
+			logging.TypeField(logging.TypeApplication),
 			zap.String("session_id", session.ID),
 			zap.Bool("is_authenticated", session.IsAuth()),
 		)
@@ -106,7 +109,8 @@ func (h *BaseHandler) getAuthenticatedFolioClient(ctx context.Context, session *
 
 	// Token is expired or missing - attempt automatic refresh (Option A - Phase 3)
 	if authToken != "" && isExpired {
-		h.logger.Info("Token expired, attempting automatic refresh",
+		h.logger.Debug("Token expired, attempting automatic refresh",
+			logging.TypeField(logging.TypeApplication),
 			zap.String("session_id", session.ID),
 			zap.Time("token_expires_at", tokenExpiresAt),
 			zap.Duration("time_since_expiry", time.Since(tokenExpiresAt)),
@@ -115,7 +119,8 @@ func (h *BaseHandler) getAuthenticatedFolioClient(ctx context.Context, session *
 		// Try to refresh using stored credentials
 		newToken, refreshErr := h.refreshToken(ctx, session)
 		if refreshErr == nil {
-			h.logger.Info("Token refresh successful",
+			h.logger.Debug("Token refresh successful",
+				logging.TypeField(logging.TypeApplication),
 				zap.String("session_id", session.ID),
 				zap.Time("new_token_expires_at", session.GetTokenExpiresAt()),
 			)
@@ -123,12 +128,14 @@ func (h *BaseHandler) getAuthenticatedFolioClient(ctx context.Context, session *
 		}
 
 		h.logger.Warn("Token refresh failed",
+			logging.TypeField(logging.TypeApplication),
 			zap.String("session_id", session.ID),
 			zap.Error(refreshErr),
 		)
 	}
 
 	h.logger.Warn("No valid authentication token available in session",
+		logging.TypeField(logging.TypeApplication),
 		zap.String("session_id", session.ID),
 		zap.Bool("is_authenticated", session.IsAuth()),
 	)
@@ -155,6 +162,7 @@ func (h *BaseHandler) refreshToken(ctx context.Context, session *types.Session) 
 			// Exponential backoff: 100ms, 200ms, 400ms
 			backoff := baseBackoff * time.Duration(1<<uint(attempt-1))
 			h.logger.Debug("Token refresh retry",
+				logging.TypeField(logging.TypeApplication),
 				zap.String("session_id", session.ID),
 				zap.Int("attempt", attempt+1),
 				zap.Duration("backoff", backoff),
@@ -170,7 +178,7 @@ func (h *BaseHandler) refreshToken(ctx context.Context, session *types.Session) 
 		// Create auth client and attempt login
 		authClient := folio.NewAuthClient(
 			session.TenantConfig.OkapiURL,
-			session.TenantConfig.Tenant,
+			session.TenantConfig.OkapiTenant,
 			100, // Token cache capacity
 		)
 
@@ -178,6 +186,7 @@ func (h *BaseHandler) refreshToken(ctx context.Context, session *types.Session) 
 		if err != nil {
 			lastErr = fmt.Errorf("refresh attempt %d failed: %w", attempt+1, err)
 			h.logger.Debug("Token refresh attempt failed",
+				logging.TypeField(logging.TypeApplication),
 				zap.String("session_id", session.ID),
 				zap.Int("attempt", attempt+1),
 				zap.Error(err),
@@ -200,6 +209,7 @@ func (h *BaseHandler) refreshToken(ctx context.Context, session *types.Session) 
 		session.UpdateToken(token, authResp.ExpiresAt)
 
 		h.logger.Debug("Token refresh succeeded",
+			logging.TypeField(logging.TypeApplication),
 			zap.String("session_id", session.ID),
 			zap.Int("attempts", attempt+1),
 			zap.Time("new_expires_at", authResp.ExpiresAt),
@@ -214,6 +224,7 @@ func (h *BaseHandler) refreshToken(ctx context.Context, session *types.Session) 
 // logRequest logs an incoming SIP2 request
 func (h *BaseHandler) logRequest(msg *parser.Message, session *types.Session) {
 	h.logger.Info("Handling SIP2 message",
+		logging.TypeField(logging.TypeSIPRequest),
 		zap.String("message_code", string(msg.Code)),
 		zap.String("session_id", session.ID),
 		zap.String("tenant", session.TenantConfig.Tenant),
@@ -224,12 +235,14 @@ func (h *BaseHandler) logRequest(msg *parser.Message, session *types.Session) {
 func (h *BaseHandler) logResponse(responseCode string, session *types.Session, err error) {
 	if err != nil {
 		h.logger.Error("Handler error",
+			logging.TypeField(logging.TypeSIPResponse),
 			zap.String("response_code", responseCode),
 			zap.String("session_id", session.ID),
 			zap.Error(err),
 		)
 	} else {
 		h.logger.Info("Handler success",
+			logging.TypeField(logging.TypeSIPResponse),
 			zap.String("response_code", responseCode),
 			zap.String("session_id", session.ID),
 		)
@@ -525,7 +538,7 @@ func (h *BaseHandler) attemptRollingRenewalWithTime(ctx context.Context, user *m
 
 	if !decision.ShouldRenew {
 		h.logger.Debug("Rolling renewal not eligible",
-			logFields...,
+			append([]zap.Field{logging.TypeField(logging.TypeApplication)}, logFields...)...,
 		)
 		return
 	}
@@ -534,7 +547,7 @@ func (h *BaseHandler) attemptRollingRenewalWithTime(ctx context.Context, user *m
 	newExpiration, err := renewalService.CalculateNewExpiration(today, renewalConfig)
 	if err != nil {
 		h.logger.Error("Failed to calculate new expiration date",
-			append(logFields, zap.Error(err))...,
+			append([]zap.Field{logging.TypeField(logging.TypeApplication)}, append(logFields, zap.Error(err))...)...,
 		)
 		return
 	}
@@ -546,7 +559,7 @@ func (h *BaseHandler) attemptRollingRenewalWithTime(ctx context.Context, user *m
 	// Dry-run mode: log what would happen without updating
 	if renewalConfig.DryRun {
 		h.logger.Info("Rolling renewal (DRY RUN) - would update expiration",
-			logFields...,
+			append([]zap.Field{logging.TypeField(logging.TypeApplication)}, logFields...)...,
 		)
 		return
 	}
@@ -560,11 +573,11 @@ func (h *BaseHandler) attemptRollingRenewalWithTime(ctx context.Context, user *m
 		// Check if it's a permission error
 		if folio.IsPermissionError(err) {
 			h.logger.Warn("Rolling renewal failed - permission denied",
-				append(logFields, zap.Error(err))...,
+				append([]zap.Field{logging.TypeField(logging.TypeApplication)}, append(logFields, zap.Error(err))...)...,
 			)
 		} else {
 			h.logger.Error("Rolling renewal failed - FOLIO API error",
-				append(logFields, zap.Error(err))...,
+				append([]zap.Field{logging.TypeField(logging.TypeApplication)}, append(logFields, zap.Error(err))...)...,
 			)
 		}
 		return
@@ -572,6 +585,6 @@ func (h *BaseHandler) attemptRollingRenewalWithTime(ctx context.Context, user *m
 
 	// Success!
 	h.logger.Info("Rolling renewal successful",
-		logFields...,
+		append([]zap.Field{logging.TypeField(logging.TypeApplication)}, logFields...)...,
 	)
 }

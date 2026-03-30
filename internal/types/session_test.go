@@ -129,14 +129,6 @@ func TestUpdateActivity(t *testing.T) {
 	}
 }
 
-func TestSetInstitutionID(t *testing.T) {
-	s := NewSession("s1", nil)
-	s.SetInstitutionID("inst-123")
-	if s.GetInstitutionID() != "inst-123" {
-		t.Errorf("GetInstitutionID = %q, want %q", s.GetInstitutionID(), "inst-123")
-	}
-}
-
 func TestSetLocationCode(t *testing.T) {
 	s := NewSession("s1", nil)
 	s.SetLocationCode("loc-456")
@@ -210,7 +202,6 @@ func TestClear(t *testing.T) {
 	s := NewSession("s1", newTestTenantConfig())
 	s.SetAuthenticated("user", "pid", "pbc", "tok", time.Now().Add(time.Hour))
 	s.SetAuthCredentials("pass")
-	s.InstitutionID = "inst"
 	s.LocationCode = "loc"
 
 	s.Clear()
@@ -270,7 +261,6 @@ func TestClone(t *testing.T) {
 	s := NewSession("s1", tc)
 	s.SetAuthenticated("user", "pid", "pbc", "tok", time.Now().Add(time.Hour))
 	s.SetAuthCredentials("secret")
-	s.SetInstitutionID("inst")
 	s.SetLocationCode("loc")
 
 	clone := s.Clone()
@@ -283,9 +273,6 @@ func TestClone(t *testing.T) {
 	}
 	if clone.IsAuthenticated != s.IsAuthenticated {
 		t.Error("Clone IsAuthenticated mismatch")
-	}
-	if clone.InstitutionID != s.InstitutionID {
-		t.Error("Clone InstitutionID mismatch")
 	}
 	if clone.LocationCode != s.LocationCode {
 		t.Error("Clone LocationCode mismatch")

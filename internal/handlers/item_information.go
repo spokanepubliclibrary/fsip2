@@ -9,6 +9,7 @@ import (
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/mediatype"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
@@ -60,7 +61,7 @@ type ItemInformationHandler struct {
 func NewItemInformationHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *ItemInformationHandler {
 	return &ItemInformationHandler{
 		BaseHandler: NewBaseHandler(logger, tenantConfig),
-		logger:      logger,
+		logger:      logger.With(logging.TypeField(logging.TypeApplication)),
 	}
 }
 
@@ -70,7 +71,6 @@ func (h *ItemInformationHandler) Handle(ctx context.Context, msg *parser.Message
 
 	// Validate required fields
 	if err := h.validateRequiredFields(msg, map[parser.FieldCode]string{
-		parser.InstitutionID:  "Institution ID",
 		parser.ItemIdentifier: "Item Identifier",
 	}); err != nil {
 		h.logger.Error("Item information validation failed", zap.Error(err))

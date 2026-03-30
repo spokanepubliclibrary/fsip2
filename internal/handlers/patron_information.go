@@ -7,6 +7,7 @@ import (
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/customfields"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
@@ -25,7 +26,7 @@ type PatronInformationHandler struct {
 func NewPatronInformationHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *PatronInformationHandler {
 	return &PatronInformationHandler{
 		BaseHandler: NewBaseHandler(logger, tenantConfig),
-		logger:      logger,
+		logger:      logger.With(logging.TypeField(logging.TypeApplication)),
 	}
 }
 
@@ -35,7 +36,6 @@ func (h *PatronInformationHandler) Handle(ctx context.Context, msg *parser.Messa
 
 	// Validate required fields
 	if err := h.validateRequiredFields(msg, map[parser.FieldCode]string{
-		parser.InstitutionID:    "Institution ID",
 		parser.PatronIdentifier: "Patron Identifier",
 	}); err != nil {
 		h.logger.Error("Patron information validation failed", zap.Error(err))

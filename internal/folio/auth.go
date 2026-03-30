@@ -7,6 +7,7 @@ import (
 
 	"github.com/spokanepubliclibrary/fsip2/internal/cache"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"go.uber.org/zap"
 )
 
@@ -82,7 +83,8 @@ func (ac *AuthClient) Login(ctx context.Context, username, password string) (*mo
 
 	// Debug logging for token expiration troubleshooting (Phase 1.1/1.2)
 	if authLogger != nil {
-		authLogger.Info("FOLIO token expiration details",
+		authLogger.Debug("FOLIO token expiration details",
+			logging.TypeField(logging.TypeApplication),
 			zap.String("username", username),
 			zap.Int("raw_expires_in_from_folio", rawExpiresIn),
 			zap.Int("effective_expires_in_seconds", expiresIn),

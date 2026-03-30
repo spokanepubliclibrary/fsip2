@@ -138,32 +138,27 @@ func (r *Reloader) reload() error {
 
 	// Load tenant configs from all sources
 	newTenants := make(map[string]*TenantConfig)
+	var newSCTenants []SCTenantConfig
 
 	for _, loader := range r.loaders {
-		tenantCfg, err := loader.Load()
+		tenantCfgs, scTenants, err := loader.Load()
 		if err != nil {
 			// Log warning but continue with other sources
 			continue
 		}
 
-		// Add to tenant map
-		newTenants[tenantCfg.Tenant] = tenantCfg
-
-		// Also add SC tenants
-		for _, scTenant := range tenantCfg.SCTenants {
-			if scTenant.Tenant != "" {
-				// Create a copy with overridden tenant name
-				scCfg := *tenantCfg
-				scCfg.Tenant = scTenant.Tenant
-				newTenants[scTenant.Tenant] = &scCfg
-			}
+		for _, tenantCfg := range tenantCfgs {
+			newTenants[tenantCfg.Tenant] = tenantCfg
 		}
+
+		newSCTenants = append(newSCTenants, scTenants...)
 	}
 
 	// Check if configuration has changed
 	if r.hasChanged(newTenants) {
 		// Update configuration
 		r.config.Tenants = newTenants
+		r.config.SCTenants = newSCTenants
 
 		// Call onChange callback if provided
 		if r.onChange != nil {
@@ -424,15 +419,6 @@ func compareFields(tenantName string, old, new *TenantConfig) []configChange {
 	}
 
 	// Compare complex nested structures using deep equal
-	if !reflect.DeepEqual(old.SCTenants, new.SCTenants) {
-		changes = append(changes, configChange{
-			tenant:   tenantName,
-			field:    "SCTenants",
-			oldValue: fmt.Sprintf("%d tenants", len(old.SCTenants)),
-			newValue: fmt.Sprintf("%d tenants", len(new.SCTenants)),
-		})
-	}
-
 	if !reflect.DeepEqual(old.SupportedMessages, new.SupportedMessages) {
 		changes = append(changes, configChange{
 			tenant:   tenantName,

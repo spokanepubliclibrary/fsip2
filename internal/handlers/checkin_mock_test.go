@@ -44,6 +44,7 @@ func closedLoan() *models.Loan {
 func TestCheckinHandle_Success(t *testing.T) {
 	tc := testutil.NewTenantConfig()
 	sess := testutil.NewAuthSession(tc)
+	sess.SetLocationCode("SP-001")
 
 	item := availableItemNoHoldings("item-001", "ITEM-001")
 	loan := closedLoan()
@@ -83,6 +84,7 @@ func TestCheckinHandle_Success(t *testing.T) {
 func TestCheckinHandle_CheckinFails(t *testing.T) {
 	tc := testutil.NewTenantConfig()
 	sess := testutil.NewAuthSession(tc)
+	sess.SetLocationCode("SP-001")
 
 	item := availableItemNoHoldings("item-002", "ITEM-002")
 
@@ -118,6 +120,7 @@ func TestCheckinHandle_CheckinFails(t *testing.T) {
 func TestCheckinHandle_FetchResponseData_ItemWithHoldings(t *testing.T) {
 	tc := testutil.NewTenantConfig()
 	sess := testutil.NewAuthSession(tc)
+	sess.SetLocationCode("SP-001")
 
 	itemWithHoldings := &models.Item{
 		ID:               "item-003",
@@ -156,6 +159,70 @@ func TestCheckinHandle_FetchResponseData_ItemWithHoldings(t *testing.T) {
 	assert.True(t, strings.HasPrefix(resp, "10"))
 	assert.Equal(t, byte('1'), resp[2], "ok byte must be '1'")
 	assert.Contains(t, resp, "A Great Novel", "instance title must appear in response")
+
+	mockInv.AssertExpectations(t)
+	mockCirc.AssertExpectations(t)
+}
+
+// TestCheckinHandle_MissingCP verifies that a checkin request fails immediately
+// with ok=0 when the session has no CP (LocationCode) set.
+func TestCheckinHandle_MissingCP(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	// Authenticated session but NO LocationCode set — simulates missing CP at login
+	sess := testutil.NewAuthSession(tc)
+
+	h := NewCheckinHandler(zap.NewNop(), tc)
+
+	msg := buildTestMsg(parser.CheckinRequest, map[parser.FieldCode]string{
+		parser.InstitutionID:   "TEST-INST",
+		parser.ItemIdentifier:  "ITEM-001",
+		parser.CurrentLocation: "SP-001", // AP is present but CP is absent from session
+	})
+
+	resp, err := h.Handle(context.Background(), msg, sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "10"), "response must start with 10")
+	assert.Equal(t, byte('0'), resp[2], "ok byte must be '0' when CP is absent from session")
+}
+
+// TestCheckinHandle_APEchoedInResponse verifies that when AP is provided in the 09
+// request, the AP value (not the CP/service point value) appears in the 10 response.
+func TestCheckinHandle_APEchoedInResponse(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	sess := testutil.NewAuthSession(tc)
+	// CP holds the actual service point UUID; AP is a different value
+	sess.SetLocationCode("service-point-uuid-from-cp")
+
+	item := availableItemNoHoldings("item-004", "ITEM-004")
+	loan := closedLoan()
+
+	mockInv := &MockInventoryClient{}
+	mockCirc := &MockCirculationClient{}
+
+	mockInv.On("GetItemByBarcode", mock.Anything, mock.Anything, "ITEM-004").Return(item, nil)
+	mockCirc.On("Checkin", mock.Anything, mock.Anything, mock.Anything).Return(loan, nil)
+	mockCirc.On("GetRequestsByItem", mock.Anything, mock.Anything, item.ID).
+		Return(&models.RequestCollection{}, nil)
+
+	h := NewCheckinHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, nil, mockCirc, mockInv, nil)
+
+	msg := buildTestMsg(parser.CheckinRequest, map[parser.FieldCode]string{
+		parser.InstitutionID:   "TEST-INST",
+		parser.ItemIdentifier:  "ITEM-004",
+		parser.CurrentLocation: "ap-location-value", // AP value distinct from CP
+	})
+
+	resp, err := h.Handle(context.Background(), msg, sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "10"))
+	assert.Equal(t, byte('1'), resp[2], "ok byte must be '1' for successful checkin")
+	// AP value from request should be echoed in the response
+	assert.Contains(t, resp, "APap-location-value", "AP from request must be echoed in 10 response")
+	// CP/service-point UUID must NOT appear as the AP value in the response
+	assert.NotContains(t, resp, "APservice-point-uuid-from-cp", "CP value must not be echoed as AP in 10 response")
 
 	mockInv.AssertExpectations(t)
 	mockCirc.AssertExpectations(t)

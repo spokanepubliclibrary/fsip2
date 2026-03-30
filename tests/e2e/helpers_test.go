@@ -89,12 +89,17 @@ func (s *E2ESetup) Exchange(t *testing.T, conn net.Conn, message string) string 
 }
 
 // Login sends SIP2 login (93) and asserts it succeeds (941 response).
+// CP is set to testServicePointUUID so checkin can resolve the service point.
 func (s *E2ESetup) Login(t *testing.T, conn net.Conn) {
 	t.Helper()
-	resp := s.Exchange(t, conn, testutil.NewLoginMessage("testuser", "testpass"))
+	resp := s.Exchange(t, conn, testutil.NewLoginMessage("testuser", "testpass", testServicePointUUID))
 	require.True(t, strings.HasPrefix(resp, "94"), "login response must start with 94, got: %s", resp)
 	require.Contains(t, resp, "941", "login must succeed")
 }
+
+// testServicePointUUID is the CP value used for all E2E sessions. It must match
+// whatever service point UUID the mock FOLIO server accepts.
+const testServicePointUUID = "test-sp-uuid"
 
 // =============================================================================
 // Server lifecycle helpers

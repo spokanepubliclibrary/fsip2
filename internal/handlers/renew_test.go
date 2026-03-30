@@ -163,13 +163,6 @@ func TestRenewHandler_MissingRequiredFields(t *testing.T) {
 		fields map[string]string
 	}{
 		{
-			name: "Missing institution ID",
-			fields: map[string]string{
-				string(parser.PatronIdentifier): "12345",
-				string(parser.ItemIdentifier):   "ITEM001",
-			},
-		},
-		{
 			name: "Missing patron identifier",
 			fields: map[string]string{
 				string(parser.InstitutionID):  "TEST",

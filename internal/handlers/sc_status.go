@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/protocol"
@@ -23,7 +24,7 @@ type SCStatusHandler struct {
 func NewSCStatusHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *SCStatusHandler {
 	return &SCStatusHandler{
 		BaseHandler: NewBaseHandler(logger, tenantConfig),
-		logger:      logger,
+		logger:      logger.With(logging.TypeField(logging.TypeApplication)),
 	}
 }
 
@@ -90,11 +91,8 @@ func (h *SCStatusHandler) buildACSStatusResponse(session *types.Session, sequenc
 	// Protocol version
 	protocolVersion := "2.00"
 
-	// Institution details
-	institutionID := session.GetInstitutionID()
-	if institutionID == "" {
-		institutionID = session.TenantConfig.Tenant
-	}
+	// Institution details — SC Status (msg 99) carries no AO field; use configured tenant name
+	institutionID := session.TenantConfig.Tenant
 
 	libraryName := session.TenantConfig.Tenant
 

@@ -396,32 +396,6 @@ func TestBuildInstanceInformationResponse_ValidInstance(t *testing.T) {
 	}
 }
 
-// TestItemInformationHandle_MissingInstitutionID covers the missing-field validation path.
-func TestItemInformationHandle_MissingInstitutionID(t *testing.T) {
-	tc := &config.TenantConfig{
-		Tenant:           "test-tenant",
-		MessageDelimiter: "\r",
-		FieldDelimiter:   "|",
-	}
-	h := NewItemInformationHandler(zap.NewNop(), tc)
-	session := types.NewSession("test", tc)
-
-	msg := &parser.Message{
-		Code: parser.ItemInformationRequest,
-		Fields: map[string]string{
-			string(parser.ItemIdentifier): "12345",
-			// InstitutionID is missing
-		},
-	}
-
-	resp, err := h.Handle(context.Background(), msg, session)
-	if resp != "96" {
-		t.Errorf("Expected '96' for missing field, got %q", resp)
-	}
-	if err == nil {
-		t.Error("Expected validation error for missing institution ID")
-	}
-}
 
 // TestItemInformationHandle_MissingItemIdentifier covers the missing-field validation path.
 func TestItemInformationHandle_MissingItemIdentifier(t *testing.T) {

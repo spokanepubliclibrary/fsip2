@@ -12,20 +12,6 @@ import (
 
 // ─── PatronStatusHandler.Handle ──────────────────────────────────────────────
 
-func TestPatronStatusHandle_MissingInstitutionID(t *testing.T) {
-	tc := testutil.NewTenantConfig()
-	h := NewPatronStatusHandler(zap.NewNop(), tc)
-	msg := buildTestMsg(parser.PatronStatusRequest, map[parser.FieldCode]string{
-		parser.PatronIdentifier: "P123",
-	})
-	resp, err := h.Handle(context.Background(), msg, testutil.NewSession(tc))
-	if err == nil {
-		t.Error("Expected validation error when institution ID is missing")
-	}
-	if resp != "96" {
-		t.Errorf("Expected '96' error response, got: %q", resp)
-	}
-}
 
 func TestPatronStatusHandle_MissingPatronIdentifier(t *testing.T) {
 	tc := testutil.NewTenantConfig()
@@ -60,20 +46,6 @@ func TestPatronStatusHandle_NoAuthToken(t *testing.T) {
 
 // ─── PatronInformationHandler.Handle ─────────────────────────────────────────
 
-func TestPatronInformationHandle_MissingInstitutionID(t *testing.T) {
-	tc := testutil.NewTenantConfig()
-	h := NewPatronInformationHandler(zap.NewNop(), tc)
-	msg := buildTestMsg(parser.PatronInformationRequest, map[parser.FieldCode]string{
-		parser.PatronIdentifier: "P123",
-	})
-	resp, err := h.Handle(context.Background(), msg, testutil.NewSession(tc))
-	if err == nil {
-		t.Error("Expected validation error when institution ID is missing")
-	}
-	if resp != "96" {
-		t.Errorf("Expected '96' error response, got: %q", resp)
-	}
-}
 
 func TestPatronInformationHandle_MissingPatronIdentifier(t *testing.T) {
 	tc := testutil.NewTenantConfig()

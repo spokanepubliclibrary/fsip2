@@ -9,18 +9,19 @@ import (
 )
 
 const validTenantYAML = `
-tenant: testlib
-okapiUrl: http://localhost:9130
-okapiTenant: testlib
-fieldDelimiter: "|"
-messageDelimiter: "\\r"
-charset: UTF-8
-timezone: America/Chicago
-supportedMessages:
-  - code: "23"
-    enabled: true
-  - code: "11"
-    enabled: true
+tenants:
+  - tenant: testlib
+    okapiUrl: http://localhost:9130
+    okapiTenant: testlib
+    fieldDelimiter: "|"
+    messageDelimiter: "\\r"
+    charset: UTF-8
+    timezone: America/Chicago
+    supportedMessages:
+      - code: "23"
+        enabled: true
+      - code: "11"
+        enabled: true
 `
 
 const invalidYAML = `
@@ -29,37 +30,37 @@ tenant: [invalid yaml
 `
 
 const validTenantYAMLWithRollingRenewals = `
-tenant: testlib2
-okapiUrl: http://localhost:9130
-okapiTenant: testlib2
-fieldDelimiter: "|"
-rollingRenewals:
-  enabled: true
-  renewWithin: "6M"
-  extendFor: "1Y"
+tenants:
+  - tenant: testlib2
+    okapiUrl: http://localhost:9130
+    okapiTenant: testlib2
+    fieldDelimiter: "|"
+    rollingRenewals:
+      enabled: true
+      renewWithin: "6M"
+      extendFor: "1Y"
 `
 
 func TestFileLoader_Load_Success(t *testing.T) {
-	// Create temp file with valid config
 	tmpFile := writeTempFile(t, validTenantYAML)
 
 	loader := &FileLoader{Path: tmpFile}
-	cfg, err := loader.Load()
+	cfgs, _, err := loader.Load()
 	if err != nil {
 		t.Fatalf("FileLoader.Load() failed: %v", err)
 	}
 
-	if cfg.Tenant != "testlib" {
-		t.Errorf("Expected tenant 'testlib', got %q", cfg.Tenant)
+	if cfgs[0].Tenant != "testlib" {
+		t.Errorf("Expected tenant 'testlib', got %q", cfgs[0].Tenant)
 	}
-	if cfg.OkapiURL != "http://localhost:9130" {
-		t.Errorf("Expected OkapiURL 'http://localhost:9130', got %q", cfg.OkapiURL)
+	if cfgs[0].OkapiURL != "http://localhost:9130" {
+		t.Errorf("Expected OkapiURL 'http://localhost:9130', got %q", cfgs[0].OkapiURL)
 	}
 }
 
 func TestFileLoader_Load_FileNotFound(t *testing.T) {
 	loader := &FileLoader{Path: "/nonexistent/path/to/config.yaml"}
-	_, err := loader.Load()
+	_, _, err := loader.Load()
 	if err == nil {
 		t.Error("Expected error for nonexistent file")
 	}
@@ -69,56 +70,57 @@ func TestFileLoader_Load_InvalidYAML(t *testing.T) {
 	tmpFile := writeTempFile(t, invalidYAML)
 
 	loader := &FileLoader{Path: tmpFile}
-	_, err := loader.Load()
+	_, _, err := loader.Load()
 	if err == nil {
 		t.Error("Expected error for invalid YAML")
 	}
 }
 
 func TestFileLoader_Load_AppliesDefaults(t *testing.T) {
-	// Minimal config - should have defaults applied
 	minimalYAML := `
-tenant: minimal-tenant
-okapiUrl: http://okapi.example.com
+tenants:
+  - tenant: minimal-tenant
+    okapiUrl: http://okapi.example.com
 `
 	tmpFile := writeTempFile(t, minimalYAML)
 
 	loader := &FileLoader{Path: tmpFile}
-	cfg, err := loader.Load()
+	cfgs, _, err := loader.Load()
 	if err != nil {
 		t.Fatalf("FileLoader.Load() failed: %v", err)
 	}
 
 	// applyTenantDefaults should fill these in
-	if cfg.MessageDelimiter != "\\r" {
-		t.Errorf("Expected default MessageDelimiter '\\r', got %q", cfg.MessageDelimiter)
+	if cfgs[0].MessageDelimiter != "\\r" {
+		t.Errorf("Expected default MessageDelimiter '\\r', got %q", cfgs[0].MessageDelimiter)
 	}
-	if cfg.FieldDelimiter != "|" {
-		t.Errorf("Expected default FieldDelimiter '|', got %q", cfg.FieldDelimiter)
+	if cfgs[0].FieldDelimiter != "|" {
+		t.Errorf("Expected default FieldDelimiter '|', got %q", cfgs[0].FieldDelimiter)
 	}
-	if cfg.Charset != "IBM850" {
-		t.Errorf("Expected default Charset 'IBM850', got %q", cfg.Charset)
+	if cfgs[0].Charset != "IBM850" {
+		t.Errorf("Expected default Charset 'IBM850', got %q", cfgs[0].Charset)
 	}
-	if cfg.Timezone != "America/New_York" {
-		t.Errorf("Expected default Timezone 'America/New_York', got %q", cfg.Timezone)
+	if cfgs[0].Timezone != "America/New_York" {
+		t.Errorf("Expected default Timezone 'America/New_York', got %q", cfgs[0].Timezone)
 	}
-	if cfg.LogLevel != "None" {
-		t.Errorf("Expected default LogLevel 'None', got %q", cfg.LogLevel)
+	if cfgs[0].LogLevel != "None" {
+		t.Errorf("Expected default LogLevel 'None', got %q", cfgs[0].LogLevel)
 	}
 }
 
 func TestFileLoader_Load_InvalidRollingRenewals(t *testing.T) {
 	badRollingYAML := `
-tenant: badtenant
-okapiUrl: http://localhost:9130
-rollingRenewals:
-  enabled: true
-  # missing renewWithin and extendFor
+tenants:
+  - tenant: badtenant
+    okapiUrl: http://localhost:9130
+    rollingRenewals:
+      enabled: true
+      # missing renewWithin and extendFor
 `
 	tmpFile := writeTempFile(t, badRollingYAML)
 
 	loader := &FileLoader{Path: tmpFile}
-	_, err := loader.Load()
+	_, _, err := loader.Load()
 	if err == nil {
 		t.Error("Expected error for invalid rolling renewals config")
 	}
@@ -128,15 +130,138 @@ func TestFileLoader_Load_WithRollingRenewals(t *testing.T) {
 	tmpFile := writeTempFile(t, validTenantYAMLWithRollingRenewals)
 
 	loader := &FileLoader{Path: tmpFile}
-	cfg, err := loader.Load()
+	cfgs, _, err := loader.Load()
 	if err != nil {
 		t.Fatalf("FileLoader.Load() with rolling renewals failed: %v", err)
 	}
-	if cfg.RollingRenewals == nil {
+	if cfgs[0].RollingRenewals == nil {
 		t.Error("Expected rolling renewals to be configured")
 	}
-	if !cfg.RollingRenewals.Enabled {
+	if !cfgs[0].RollingRenewals.Enabled {
 		t.Error("Expected rolling renewals to be enabled")
+	}
+}
+
+// TestFileLoader_Load_FlatFormat_ReturnsError guards against regression of the old
+// flat single-tenant format. The list format is the only supported format.
+func TestFileLoader_Load_FlatFormat_ReturnsError(t *testing.T) {
+	flatYAML := `
+tenant: oldtenant
+okapiUrl: http://localhost:9130
+okapiTenant: oldtenant
+`
+	tmpFile := writeTempFile(t, flatYAML)
+
+	loader := &FileLoader{Path: tmpFile}
+	_, _, err := loader.Load()
+	if err == nil {
+		t.Error("Expected error for flat (non-list) format YAML")
+	}
+}
+
+func TestFileLoader_Load_EmptyTenantsList_ReturnsError(t *testing.T) {
+	emptyListYAML := `
+tenants: []
+`
+	tmpFile := writeTempFile(t, emptyListYAML)
+
+	loader := &FileLoader{Path: tmpFile}
+	_, _, err := loader.Load()
+	if err == nil {
+		t.Error("Expected error for empty tenants list")
+	}
+}
+
+func TestFileLoader_Load_MissingTenantName_ReturnsError(t *testing.T) {
+	noNameYAML := `
+tenants:
+  - okapiUrl: http://localhost:9130
+    okapiTenant: unnamed
+`
+	tmpFile := writeTempFile(t, noNameYAML)
+
+	loader := &FileLoader{Path: tmpFile}
+	_, _, err := loader.Load()
+	if err == nil {
+		t.Error("Expected error for tenant entry missing 'tenant' field")
+	}
+}
+
+func TestFileLoader_Load_ListFormat_MultiTenant(t *testing.T) {
+	multiYAML := `
+tenants:
+  - tenant: alpha
+    okapiUrl: http://alpha.example.com
+    okapiTenant: alpha
+  - tenant: beta
+    okapiUrl: http://beta.example.com
+    okapiTenant: beta
+`
+	tmpFile := writeTempFile(t, multiYAML)
+
+	loader := &FileLoader{Path: tmpFile}
+	cfgs, _, err := loader.Load()
+	if err != nil {
+		t.Fatalf("FileLoader.Load() failed: %v", err)
+	}
+	if len(cfgs) != 2 {
+		t.Fatalf("Expected 2 tenants, got %d", len(cfgs))
+	}
+	names := map[string]bool{cfgs[0].Tenant: true, cfgs[1].Tenant: true}
+	if !names["alpha"] || !names["beta"] {
+		t.Errorf("Expected tenants 'alpha' and 'beta', got %v", names)
+	}
+	// Defaults applied to each
+	for _, cfg := range cfgs {
+		if cfg.Charset != "IBM850" {
+			t.Errorf("tenant %q: expected default Charset 'IBM850', got %q", cfg.Tenant, cfg.Charset)
+		}
+	}
+}
+
+func TestFileLoader_Load_ListFormat_InvalidRollingRenewals(t *testing.T) {
+	// One tenant has invalid rolling renewals — error should include the tenant name.
+	badYAML := `
+tenants:
+  - tenant: goodtenant
+    okapiUrl: http://localhost:9130
+  - tenant: badtenant
+    okapiUrl: http://localhost:9130
+    rollingRenewals:
+      enabled: true
+      # missing renewWithin and extendFor
+`
+	tmpFile := writeTempFile(t, badYAML)
+
+	loader := &FileLoader{Path: tmpFile}
+	_, _, err := loader.Load()
+	if err == nil {
+		t.Error("Expected error for invalid rolling renewals in list format")
+	}
+}
+
+// TestFileLoader_Load_ListFormat_DuplicateTenantName documents that the loader returns
+// both entries when tenant names are duplicated. Last-write-wins when the caller inserts
+// into its map — this is consistent with multi-source behavior and is not an error at
+// the loader level.
+func TestFileLoader_Load_ListFormat_DuplicateTenantName(t *testing.T) {
+	dupYAML := `
+tenants:
+  - tenant: dupe
+    okapiUrl: http://first.example.com
+  - tenant: dupe
+    okapiUrl: http://second.example.com
+`
+	tmpFile := writeTempFile(t, dupYAML)
+
+	loader := &FileLoader{Path: tmpFile}
+	cfgs, _, err := loader.Load()
+	if err != nil {
+		t.Fatalf("FileLoader.Load() failed: %v", err)
+	}
+	// Loader returns both entries; caller map semantics determine final value.
+	if len(cfgs) != 2 {
+		t.Errorf("Expected 2 entries for duplicate tenant name, got %d", len(cfgs))
 	}
 }
 
@@ -149,13 +274,13 @@ func TestHTTPLoader_Load_Success(t *testing.T) {
 	defer server.Close()
 
 	loader := &HTTPLoader{URL: server.URL + "/config"}
-	cfg, err := loader.Load()
+	cfgs, _, err := loader.Load()
 	if err != nil {
 		t.Fatalf("HTTPLoader.Load() failed: %v", err)
 	}
 
-	if cfg.Tenant != "testlib" {
-		t.Errorf("Expected tenant 'testlib', got %q", cfg.Tenant)
+	if cfgs[0].Tenant != "testlib" {
+		t.Errorf("Expected tenant 'testlib', got %q", cfgs[0].Tenant)
 	}
 }
 
@@ -167,7 +292,7 @@ func TestHTTPLoader_Load_ServerError(t *testing.T) {
 	defer server.Close()
 
 	loader := &HTTPLoader{URL: server.URL + "/config"}
-	_, err := loader.Load()
+	_, _, err := loader.Load()
 	if err == nil {
 		t.Error("Expected error for server error response")
 	}
@@ -181,7 +306,7 @@ func TestHTTPLoader_Load_Non200Status(t *testing.T) {
 	defer server.Close()
 
 	loader := &HTTPLoader{URL: server.URL + "/config"}
-	_, err := loader.Load()
+	_, _, err := loader.Load()
 	if err == nil {
 		t.Error("Expected error for non-200 status")
 	}
@@ -196,15 +321,17 @@ func TestHTTPLoader_Load_InvalidYAML(t *testing.T) {
 	defer server.Close()
 
 	loader := &HTTPLoader{URL: server.URL + "/config"}
-	_, err := loader.Load()
+	_, _, err := loader.Load()
 	if err == nil {
 		t.Error("Expected error for invalid YAML from HTTP")
 	}
 }
 
 func TestHTTPLoader_Load_AppliesDefaults(t *testing.T) {
-	minimalYAML := `tenant: http-tenant
-okapiUrl: http://okapi.example.com
+	minimalYAML := `
+tenants:
+  - tenant: http-tenant
+    okapiUrl: http://okapi.example.com
 `
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml")
@@ -214,29 +341,31 @@ okapiUrl: http://okapi.example.com
 	defer server.Close()
 
 	loader := &HTTPLoader{URL: server.URL + "/config"}
-	cfg, err := loader.Load()
+	cfgs, _, err := loader.Load()
 	if err != nil {
 		t.Fatalf("HTTPLoader.Load() failed: %v", err)
 	}
 
-	if cfg.Charset != "IBM850" {
-		t.Errorf("Expected default Charset 'IBM850', got %q", cfg.Charset)
+	if cfgs[0].Charset != "IBM850" {
+		t.Errorf("Expected default Charset 'IBM850', got %q", cfgs[0].Charset)
 	}
 }
 
 func TestHTTPLoader_Load_InvalidURL(t *testing.T) {
 	loader := &HTTPLoader{URL: "http://127.0.0.1:1/nonexistent"}
-	_, err := loader.Load()
+	_, _, err := loader.Load()
 	if err == nil {
 		t.Error("Expected error for unreachable URL")
 	}
 }
 
 func TestHTTPLoader_Load_InvalidRollingRenewals(t *testing.T) {
-	badYAML := `tenant: badtenant
-okapiUrl: http://localhost:9130
-rollingRenewals:
-  enabled: true
+	badYAML := `
+tenants:
+  - tenant: badtenant
+    okapiUrl: http://localhost:9130
+    rollingRenewals:
+      enabled: true
 `
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/yaml")
@@ -246,9 +375,59 @@ rollingRenewals:
 	defer server.Close()
 
 	loader := &HTTPLoader{URL: server.URL + "/config"}
-	_, err := loader.Load()
+	_, _, err := loader.Load()
 	if err == nil {
 		t.Error("Expected error for invalid rolling renewals in HTTP config")
+	}
+}
+
+func TestHTTPLoader_Load_ListFormat(t *testing.T) {
+	multiYAML := `
+tenants:
+  - tenant: http-alpha
+    okapiUrl: http://alpha.example.com
+    okapiTenant: http-alpha
+  - tenant: http-beta
+    okapiUrl: http://beta.example.com
+    okapiTenant: http-beta
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(multiYAML))
+	}))
+	defer server.Close()
+
+	loader := &HTTPLoader{URL: server.URL + "/config"}
+	cfgs, _, err := loader.Load()
+	if err != nil {
+		t.Fatalf("HTTPLoader.Load() failed: %v", err)
+	}
+	if len(cfgs) != 2 {
+		t.Fatalf("Expected 2 tenants, got %d", len(cfgs))
+	}
+	names := map[string]bool{cfgs[0].Tenant: true, cfgs[1].Tenant: true}
+	if !names["http-alpha"] || !names["http-beta"] {
+		t.Errorf("Expected tenants 'http-alpha' and 'http-beta', got %v", names)
+	}
+}
+
+func TestHTTPLoader_Load_FlatFormat_ReturnsError(t *testing.T) {
+	flatYAML := `tenant: oldtenant
+okapiUrl: http://localhost:9130
+okapiTenant: oldtenant
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(flatYAML))
+	}))
+	defer server.Close()
+
+	loader := &HTTPLoader{URL: server.URL + "/config"}
+	_, _, err := loader.Load()
+	if err == nil {
+		t.Error("Expected error for flat (non-list) format YAML from HTTP")
 	}
 }
 
@@ -301,7 +480,7 @@ func TestS3Loader_Load_FailsWithoutCredentials(t *testing.T) {
 		Key:    "nonexistent-key",
 		Region: "us-east-1",
 	}
-	_, err := loader.Load()
+	_, _, err := loader.Load()
 	if err == nil {
 		t.Error("Expected error from S3Loader.Load without valid S3 credentials")
 	}

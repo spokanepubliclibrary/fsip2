@@ -92,47 +92,6 @@ func TestEndSessionHandler_Handle_Success(t *testing.T) {
 	}
 }
 
-func TestEndSessionHandler_Handle_MissingInstitutionID(t *testing.T) {
-	tenantConfig := &config.TenantConfig{
-		Tenant:           "test-tenant",
-		MessageDelimiter: "\r",
-		FieldDelimiter:   "|",
-	}
-
-	logger := zap.NewNop()
-	handler := NewEndSessionHandler(logger, tenantConfig)
-	session := types.NewSession("test-session", tenantConfig)
-
-	// Create message without institution ID
-	msg := &parser.Message{
-		Code:   parser.EndPatronSessionRequest,
-		Fields: make(map[string]string),
-	}
-	msg.Fields[string(parser.PatronIdentifier)] = "patron-barcode"
-
-	ctx := context.Background()
-	response, err := handler.Handle(ctx, msg, session)
-
-	// Should not error but return failure response
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	// Response should start with "36"
-	if len(response) < 2 || response[:2] != "36" {
-		t.Errorf("Expected end session response, got: %s", response)
-	}
-
-	// Response should indicate failure (N)
-	if len(response) < 3 || response[2:3] != "N" {
-		t.Errorf("Expected failed end session (N), got: %s", response)
-	}
-
-	// Verify failure message
-	if !strings.Contains(response, "AFFailed to end session") {
-		t.Errorf("Response should contain failure message, got: %s", response)
-	}
-}
 
 func TestEndSessionHandler_Handle_MissingPatronIdentifier(t *testing.T) {
 	tenantConfig := &config.TenantConfig{

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/protocol"
@@ -26,7 +27,7 @@ type FeePaidHandler struct {
 func NewFeePaidHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *FeePaidHandler {
 	return &FeePaidHandler{
 		BaseHandler: NewBaseHandler(logger, tenantConfig),
-		logger:      logger,
+		logger:      logger.With(logging.TypeField(logging.TypeApplication)),
 	}
 }
 
@@ -46,7 +47,6 @@ func (h *FeePaidHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 	// Validate required fields
 	// Note: Currency type is in the fixed-length section, not a variable field (BY)
 	if err := h.validateRequiredFields(msg, map[parser.FieldCode]string{
-		parser.InstitutionID:    "Institution ID",
 		parser.PatronIdentifier: "Patron Identifier",
 		parser.FeeAmount:        "Fee Amount",
 	}); err != nil {

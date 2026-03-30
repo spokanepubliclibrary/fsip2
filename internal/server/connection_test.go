@@ -805,13 +805,19 @@ func TestHandleLoginTenantResolution_TenantSwitch(t *testing.T) {
 		Tenant:           "default",
 		MessageDelimiter: "\r",
 		FieldDelimiter:   "|",
-		SCTenants: []config.SCTenantConfig{
-			{Tenant: "branch", UsernamePrefixes: []string{"BRANCH-"}},
-		},
+	}
+	branchTc := &config.TenantConfig{
+		Tenant:           "branch",
+		MessageDelimiter: "\r",
+		FieldDelimiter:   "|",
 	}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
 			"default": defaultTc,
+			"branch":  branchTc,
+		},
+		SCTenants: []config.SCTenantConfig{
+			{Tenant: "branch", UsernamePrefixes: []string{"BRANCH-"}},
 		},
 	}
 	logger, _ := zap.NewDevelopment()
@@ -824,7 +830,7 @@ func TestHandleLoginTenantResolution_TenantSwitch(t *testing.T) {
 	msg := &parser.Message{
 		Code: parser.LoginRequest,
 		Fields: map[string]string{
-			string(parser.PatronIdentifier): "BRANCH-user123",
+			string(parser.LoginUserID): "BRANCH-user123",
 		},
 		MultiValueFields: map[string][]string{},
 	}
@@ -909,4 +915,52 @@ func TestReadMessageDelimiterDetection(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHandleLoginTenantResolution_UsernamePrefix — CN field (LoginUserID) drives tenant
+// resolution via UsernamePrefixes. The AA field (PatronIdentifier) is intentionally absent
+// so the test fails if the implementation reads PatronIdentifier instead of LoginUserID.
+func TestHandleLoginTenantResolution_UsernamePrefix(t *testing.T) {
+	defaultTc := &config.TenantConfig{
+		Tenant:           "default",
+		MessageDelimiter: "\r",
+		FieldDelimiter:   "|",
+	}
+	lib4Tc := &config.TenantConfig{
+		Tenant:           "lib4",
+		MessageDelimiter: "\r",
+		FieldDelimiter:   "|",
+	}
+	cfg := &config.Config{
+		Tenants: map[string]*config.TenantConfig{
+			"default": defaultTc,
+			"lib4":    lib4Tc,
+		},
+		SCTenants: []config.SCTenantConfig{
+			{Tenant: "lib4", UsernamePrefixes: []string{"lib4_"}},
+		},
+	}
+	logger, _ := zap.NewDevelopment()
+	srv, _ := NewServer(cfg, logger)
+	ts := tenant.NewService(cfg)
+	mc := newMockConn("")
+	sess := types.NewSession("test-session", defaultTc)
+	conn := NewConnection(mc, sess, ts, nil, srv)
+
+	// CN = LoginUserID set to a lib4-prefixed username.
+	// AA = PatronIdentifier is deliberately absent (or set to a non-matching value)
+	// to prove it is CN — not AA — that drives resolution.
+	msg := &parser.Message{
+		Code: parser.LoginRequest,
+		Fields: map[string]string{
+			string(parser.LoginUserID):   "lib4_sip1",
+			string(parser.LoginPassword): "secret",
+		},
+		MultiValueFields: map[string][]string{},
+	}
+
+	err := conn.handleLoginTenantResolution(context.Background(), msg)
+	assert.NoError(t, err)
+	assert.Equal(t, "lib4", conn.session.TenantConfig.Tenant,
+		"tenant should be resolved to 'lib4' via LoginUserID prefix, not 'default'")
 }

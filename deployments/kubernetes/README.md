@@ -97,6 +97,92 @@ The `configmap.yaml` contains two configuration files:
 - `config.yaml`: Bootstrap configuration (Okapi URL, ports, etc.)
 - `tenant-config.yaml`: Tenant-specific settings
 
+#### Tenant Configuration Format
+
+`tenant-config.yaml` **must** use the `tenants:` list format — this is the only supported format:
+
+```yaml
+tenants:
+  - tenant: diku
+    okapiUrl: https://okapi-diku.example.com
+    charset: UTF-8
+    ...
+
+  - tenant: lib2
+    okapiUrl: https://okapi-lib2.example.com
+    charset: IBM850
+    ...
+```
+
+A single ConfigMap key handles all tenants regardless of count. The flat single-tenant format (no `tenants:` key) is not supported and will be rejected at startup with a clear error message.
+
+#### SC Tenant Routing (`scTenants`)
+
+Port-based tenant routing is declared with the **top-level** `scTenants:` key inside `tenant-config.yaml` — not nested under an individual tenant entry. Each rule maps one or more connection properties (port, username prefix, subnet) to a tenant; the first matching rule wins.
+
+```yaml
+# tenant-config.yaml (inside configmap.yaml)
+tenants:
+  - tenant: diku
+    ...
+  - tenant: lib2
+    ...
+
+# Top-level — not nested under any tenant
+scTenants:
+  - tenant: lib2
+    port: 6444          # route connections arriving on port 6444 to lib2
+  - tenant: diku
+    scSubnet: 192.168.1.0/24
+```
+
+Single-tenant deployments do not need `scTenants`; all connections are routed to the single configured tenant via the bootstrap port only.
+
+#### Port-Based Routing: Required Manifest Changes
+
+When one or more `scTenants` entries use a `port:` value different from the bootstrap port (default `6443`), **every unique additional port must be exposed in both the Deployment and Service manifests**.
+
+**Deployment — add a `containerPort` for each additional port:**
+
+```yaml
+# deployment.yaml — ports section of the fsip2 container
+ports:
+- name: sip2
+  containerPort: 6443   # bootstrap port (always present)
+  protocol: TCP
+- name: sip2-lib2       # one entry per additional scTenant port
+  containerPort: 6444
+  protocol: TCP
+- name: http-metrics
+  containerPort: 8081
+  protocol: TCP
+```
+
+**Service — add a matching `port` entry for each additional port:**
+
+```yaml
+# service.yaml — ports section of the ClusterIP (and/or LoadBalancer) Service
+ports:
+- name: sip2
+  port: 6443
+  targetPort: sip2
+  protocol: TCP
+- name: sip2-lib2       # mirrors the containerPort name above
+  port: 6444
+  targetPort: sip2-lib2
+  protocol: TCP
+- name: http-metrics
+  port: 8081
+  targetPort: http-metrics
+  protocol: TCP
+```
+
+Apply both files after editing:
+
+```bash
+kubectl apply -f deployment.yaml -f service.yaml -n fsip2
+```
+
 To update configuration:
 
 ```bash

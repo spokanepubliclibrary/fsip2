@@ -25,9 +25,13 @@ func NewService(cfg *config.Config) *Service {
 		tenantConfigs:    cfg.Tenants,
 	}
 
-	// Find default tenant config
+	// Find default tenant config: use first tenant not referenced by any SCTenant entry
+	referencedTenants := make(map[string]bool)
+	for _, scTenant := range cfg.SCTenants {
+		referencedTenants[scTenant.Tenant] = true
+	}
 	for _, tenantCfg := range cfg.Tenants {
-		if len(tenantCfg.SCTenants) == 0 {
+		if !referencedTenants[tenantCfg.Tenant] {
 			s.defaultConfig = tenantCfg
 			break
 		}
@@ -49,39 +53,32 @@ func NewService(cfg *config.Config) *Service {
 
 // initializeResolvers sets up the default resolvers
 func (s *Service) initializeResolvers(cfg *config.Config) {
-	// Create resolvers for each tenant with SC tenants defined
-	for _, tenantCfg := range cfg.Tenants {
-		if len(tenantCfg.SCTenants) == 0 {
+	// Create resolvers for each SC tenant entry, looking up the full TenantConfig by name
+	for _, scTenant := range cfg.SCTenants {
+		tenantCfg, ok := cfg.Tenants[scTenant.Tenant]
+		if !ok {
+			// Referenced tenant is not defined in Tenants map — skip
 			continue
 		}
 
-		for _, scTenant := range tenantCfg.SCTenants {
-			// Create a tenant config for this SC tenant
-			scConfig := *tenantCfg
-			scConfig.Tenant = scTenant.Tenant
-			if scTenant.Tenant == "" {
-				scConfig.Tenant = tenantCfg.Tenant
-			}
+		// Add IP resolver if subnet is configured
+		if scTenant.SCSubnet != "" {
+			s.AddResolver(NewIPResolver(scTenant.SCSubnet, tenantCfg))
+		}
 
-			// Add IP resolver if subnet is configured
-			if scTenant.SCSubnet != "" {
-				s.AddResolver(NewIPResolver(scTenant.SCSubnet, &scConfig))
-			}
+		// Add port resolver if port is configured
+		if scTenant.Port > 0 {
+			s.AddResolver(NewPortResolver(scTenant.Port, tenantCfg))
+		}
 
-			// Add port resolver if port is configured
-			if scTenant.Port > 0 {
-				s.AddResolver(NewPortResolver(scTenant.Port, &scConfig))
-			}
+		// Add location code resolver if location codes are configured
+		if len(scTenant.LocationCodes) > 0 {
+			s.AddResolver(NewLocationCodeResolver(scTenant.LocationCodes, tenantCfg))
+		}
 
-			// Add location code resolver if location codes are configured
-			if len(scTenant.LocationCodes) > 0 {
-				s.AddResolver(NewLocationCodeResolver(scTenant.LocationCodes, &scConfig))
-			}
-
-			// Add username prefix resolver if prefixes are configured
-			if len(scTenant.UsernamePrefixes) > 0 {
-				s.AddResolver(NewUsernamePrefixResolver(scTenant.UsernamePrefixes, &scConfig))
-			}
+		// Add username prefix resolver if prefixes are configured
+		if len(scTenant.UsernamePrefixes) > 0 {
+			s.AddResolver(NewUsernamePrefixResolver(scTenant.UsernamePrefixes, tenantCfg))
 		}
 	}
 
@@ -131,11 +128,10 @@ func (s *Service) ResolveAtConnect(ctx context.Context, clientIP string, clientP
 }
 
 // ResolveAtLogin resolves tenant at LOGIN time using login message fields
-func (s *Service) ResolveAtLogin(ctx context.Context, username, locationCode, institutionID string, currentTenant *config.TenantConfig) (*config.TenantConfig, error) {
+func (s *Service) ResolveAtLogin(ctx context.Context, username, locationCode string, currentTenant *config.TenantConfig) (*config.TenantConfig, error) {
 	data := &ResolverData{
 		Username:      username,
 		LocationCode:  locationCode,
-		InstitutionID: institutionID,
 		CurrentTenant: currentTenant,
 	}
 

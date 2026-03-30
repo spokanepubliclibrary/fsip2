@@ -82,13 +82,13 @@ func (c *Connection) Handle(ctx context.Context) error {
 			response, err := c.processMessage(ctx, rawMessage)
 			if err != nil {
 				// Log error but continue (don't close connection on single message error)
-				c.server.logger.Error("Failed to process message", zap.Error(err), zap.String("message", rawMessage))
+				c.server.logger.Error("Failed to process message", logging.TypeField(logging.TypeApplication), zap.Error(err), zap.String("message", rawMessage))
 
 				// Try to send an error response to the client instead of silently continuing
 				errorResponse := c.buildErrorResponse(rawMessage, err)
 				if errorResponse != "" {
 					if sendErr := c.sendMessage(errorResponse); sendErr != nil {
-						c.server.logger.Error("Failed to send error response", zap.Error(sendErr))
+						c.server.logger.Error("Failed to send error response", logging.TypeField(logging.TypeApplication), zap.Error(sendErr))
 					}
 				}
 				continue
@@ -177,7 +177,12 @@ func (c *Connection) readMessage(reader *bufio.Reader) (string, error) {
 	logLevel := c.session.TenantConfig.LogLevel
 	if logging.ShouldLogMessage(messageCode, logLevel) {
 		obfuscatedMsg := logging.ObfuscateMessage(receivedMsg, messageCode, logLevel)
-		c.server.logger.Info("<-- " + obfuscatedMsg)
+		c.server.logger.Info("SIP2 message received",
+			logging.TypeField(logging.TypeSIPRequest),
+			zap.String("message", obfuscatedMsg),
+			zap.String("message_code", messageCode),
+			zap.String("session_id", c.session.ID),
+		)
 	}
 
 	return receivedMsg, nil
@@ -210,6 +215,7 @@ func (c *Connection) processMessage(ctx context.Context, rawMessage string) (str
 	handler, ok := c.handlers[msg.Code]
 	if !ok {
 		c.server.logger.Error("No handler found for message type",
+			logging.TypeField(logging.TypeApplication),
 			zap.String("message_code", string(msg.Code)),
 			zap.String("tenant", c.session.TenantConfig.Tenant))
 		return "", fmt.Errorf("no handler for message type: %s", msg.Code)
@@ -222,6 +228,7 @@ func (c *Connection) processMessage(ctx context.Context, rawMessage string) (str
 
 	// Log handler invocation
 	c.server.logger.Info("Invoking message handler",
+		logging.TypeField(logging.TypeApplication),
 		zap.String("message_code", string(msg.Code)),
 		zap.String("tenant", tenant),
 		zap.String("session_id", c.session.ID))
@@ -241,6 +248,7 @@ func (c *Connection) processMessage(ctx context.Context, rawMessage string) (str
 		// Track error
 		metrics.MessageErrors.WithLabelValues(messageType, tenant, "handler_error").Inc()
 		c.server.logger.Error("Handler returned error",
+			logging.TypeField(logging.TypeApplication),
 			zap.String("message_code", string(msg.Code)),
 			zap.String("tenant", tenant),
 			zap.Error(err))
@@ -249,6 +257,7 @@ func (c *Connection) processMessage(ctx context.Context, rawMessage string) (str
 
 	// Log successful handler response
 	c.server.logger.Info("Handler generated response",
+		logging.TypeField(logging.TypeApplication),
 		zap.String("message_code", string(msg.Code)),
 		zap.String("tenant", tenant),
 		zap.Int("response_length", len(response)))
@@ -259,16 +268,14 @@ func (c *Connection) processMessage(ctx context.Context, rawMessage string) (str
 // handleLoginTenantResolution handles tenant resolution during LOGIN
 func (c *Connection) handleLoginTenantResolution(ctx context.Context, msg *parser.Message) error {
 	// Extract login fields
-	username := msg.GetField(parser.PatronIdentifier)
+	username := msg.GetField(parser.LoginUserID)
 	locationCode := msg.GetField(parser.LocationCode)
-	institutionID := msg.GetField(parser.InstitutionID)
 
 	// Attempt LOGIN phase resolution
 	newTenant, err := c.tenantService.ResolveAtLogin(
 		ctx,
 		username,
 		locationCode,
-		institutionID,
 		c.session.TenantConfig,
 	)
 	if err != nil {
@@ -293,7 +300,12 @@ func (c *Connection) sendMessage(message string) error {
 	logLevel := c.session.TenantConfig.LogLevel
 	if logging.ShouldLogMessage(messageCode, logLevel) {
 		obfuscatedMsg := logging.ObfuscateMessage(message, messageCode, logLevel)
-		c.server.logger.Info("--> " + obfuscatedMsg)
+		c.server.logger.Info("SIP2 message sent",
+			logging.TypeField(logging.TypeSIPResponse),
+			zap.String("message", obfuscatedMsg),
+			zap.String("message_code", messageCode),
+			zap.String("session_id", c.session.ID),
+		)
 	}
 
 	// Add delimiter if not present
@@ -305,6 +317,7 @@ func (c *Connection) sendMessage(message string) error {
 
 	// Log response format details
 	c.server.logger.Debug("Sending response to client",
+		logging.TypeField(logging.TypeApplication),
 		zap.Int("message_length", len(message)),
 		zap.Int("bytes_length", len(messageBytes)),
 		zap.Bool("had_delimiter", hadDelimiter),
@@ -315,12 +328,14 @@ func (c *Connection) sendMessage(message string) error {
 	_, err := c.conn.Write(messageBytes)
 	if err != nil {
 		c.server.logger.Error("Failed to write message to connection",
+			logging.TypeField(logging.TypeApplication),
 			zap.Error(err),
 			zap.String("session_id", c.session.ID))
 		return fmt.Errorf("failed to write message: %w", err)
 	}
 
 	c.server.logger.Debug("Response sent successfully",
+		logging.TypeField(logging.TypeApplication),
 		zap.Int("bytes_written", len(messageBytes)),
 		zap.String("session_id", c.session.ID))
 
@@ -349,6 +364,7 @@ func (c *Connection) buildErrorResponse(rawMessage string, processingError error
 	if err != nil {
 		// Can't parse the message, can't send a proper response
 		c.server.logger.Warn("Cannot build error response - failed to parse message",
+			logging.TypeField(logging.TypeApplication),
 			zap.Error(err),
 			zap.String("raw_message", rawMessage))
 		return ""
@@ -359,6 +375,7 @@ func (c *Connection) buildErrorResponse(rawMessage string, processingError error
 	if responseCode == "" {
 		// No response code mapping exists
 		c.server.logger.Warn("Cannot build error response - no response code mapping",
+			logging.TypeField(logging.TypeApplication),
 			zap.String("request_code", string(msg.Code)))
 		return ""
 	}
@@ -423,6 +440,7 @@ func (c *Connection) buildErrorResponse(rawMessage string, processingError error
 	response, err := c.builder.Build(responseCode, content, msg.SequenceNumber)
 	if err != nil {
 		c.server.logger.Error("Failed to build error response",
+			logging.TypeField(logging.TypeApplication),
 			zap.Error(err),
 			zap.String("response_code", string(responseCode)))
 		return ""

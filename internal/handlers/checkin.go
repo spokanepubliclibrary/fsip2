@@ -9,6 +9,7 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/mediatype"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
@@ -20,6 +21,7 @@ import (
 // CheckinHandler handles SIP2 Checkin requests (09)
 type CheckinHandler struct {
 	*BaseHandler
+	logger *zap.Logger
 }
 
 // checkinResponseData holds all data needed to build a complete checkin response
@@ -46,6 +48,7 @@ type checkinResponseData struct {
 func NewCheckinHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *CheckinHandler {
 	return &CheckinHandler{
 		BaseHandler: NewBaseHandler(logger, tenantConfig),
+		logger:      logger.With(logging.TypeField(logging.TypeApplication)),
 	}
 }
 
@@ -55,7 +58,6 @@ func (h *CheckinHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 
 	// Validate required fields
 	if err := h.validateRequiredFields(msg, map[parser.FieldCode]string{
-		parser.InstitutionID:  "Institution ID",
 		parser.ItemIdentifier: "Item Identifier",
 	}); err != nil {
 		h.logger.Error("Checkin validation failed", zap.Error(err))
@@ -63,14 +65,24 @@ func (h *CheckinHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 	}
 
 	// Extract fields
-	currentLocation := msg.GetField(parser.CurrentLocation)
+	currentLocation := msg.GetField(parser.CurrentLocation) // AP: echoed in 10 response only
 	institutionID := msg.GetField(parser.InstitutionID)
 	itemIdentifier := msg.GetField(parser.ItemIdentifier)
+	servicePointID := session.GetLocationCode() // CP: FOLIO service point UUID
+
+	// Validate that CP is set in session — fail fast before any FOLIO calls
+	if servicePointID == "" {
+		h.logger.Error("Checkin failed: service point ID (CP field) is required but not set in session",
+			zap.String("item_identifier", itemIdentifier),
+		)
+		return h.buildCheckinResponse(false, institutionID, itemIdentifier, currentLocation, msg, session), nil
+	}
 
 	h.logger.Info("Checkin request",
 		zap.String("institution_id", institutionID),
 		zap.String("item_identifier", itemIdentifier),
-		zap.String("current_location", currentLocation),
+		zap.String("current_location_ap", currentLocation),
+		zap.String("service_point_cp", servicePointID),
 	)
 
 	// Get authenticated FOLIO client
@@ -78,16 +90,6 @@ func (h *CheckinHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 	if err != nil {
 		h.logger.Error("Failed to get authenticated client", zap.Error(err))
 		return h.buildCheckinResponse(false, institutionID, itemIdentifier, currentLocation, msg, session), nil
-	}
-
-	// Validate that current location (service point) is provided
-	// FOLIO requires a service point ID for checkin operations
-	if currentLocation == "" {
-		h.logger.Error("Checkin failed: service point ID (AP field) is required but not provided",
-			zap.String("item_identifier", itemIdentifier),
-		)
-		// Return error response indicating service point is required
-		return h.buildCheckinResponse(false, institutionID, itemIdentifier, "", msg, session), nil
 	}
 
 	// Check if item is claimed returned and handle based on config
@@ -116,7 +118,7 @@ func (h *CheckinHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 	// Build checkin request for FOLIO
 	checkinReq := folio.CheckinRequest{
 		ItemBarcode:               itemIdentifier,
-		ServicePointID:            currentLocation,
+		ServicePointID:            servicePointID,
 		CheckInDate:               time.Now().Format(time.RFC3339),
 		ClaimedReturnedResolution: session.TenantConfig.MapClaimedReturnedResolutionToFOLIO(),
 	}

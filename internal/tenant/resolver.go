@@ -36,9 +36,8 @@ type ResolverData struct {
 	ServerPort int
 
 	// Login message data (available in LOGIN phase)
-	Username      string
-	LocationCode  string
-	InstitutionID string
+	Username     string
+	LocationCode string
 
 	// Current tenant config (for context)
 	CurrentTenant *config.TenantConfig

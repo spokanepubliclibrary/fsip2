@@ -23,6 +23,22 @@ const (
 	LevelError LogLevel = "error"
 )
 
+// LogType identifies the origin of a log entry.
+type LogType string
+
+const (
+	// TypeApplication marks startup, shutdown, config, and server-level events.
+	TypeApplication LogType = "application"
+	// TypeSIPRequest marks an incoming SIP2 message from a self-service kiosk.
+	TypeSIPRequest LogType = "sip_request"
+	// TypeSIPResponse marks an outgoing SIP2 response to a self-service kiosk.
+	TypeSIPResponse LogType = "sip_response"
+	// TypeFolioRequest marks an outbound HTTP call to the FOLIO API (debug only).
+	TypeFolioRequest LogType = "folio_request"
+	// TypeFolioResponse marks a FOLIO API HTTP response received (debug only).
+	TypeFolioResponse LogType = "folio_response"
+)
+
 // NewLogger creates a new logger with the specified level and optional log file
 func NewLogger(level string, logFile string) (*zap.Logger, error) {
 	// If log file is specified, use file logger

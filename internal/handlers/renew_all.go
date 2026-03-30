@@ -6,6 +6,7 @@ import (
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
@@ -22,7 +23,7 @@ type RenewAllHandler struct {
 func NewRenewAllHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *RenewAllHandler {
 	return &RenewAllHandler{
 		BaseHandler: NewBaseHandler(logger, tenantConfig),
-		logger:      logger,
+		logger:      logger.With(logging.TypeField(logging.TypeApplication)),
 	}
 }
 
@@ -32,7 +33,6 @@ func (h *RenewAllHandler) Handle(ctx context.Context, msg *parser.Message, sessi
 
 	// Validate required fields
 	if err := h.validateRequiredFields(msg, map[parser.FieldCode]string{
-		parser.InstitutionID:    "Institution ID",
 		parser.PatronIdentifier: "Patron Identifier",
 	}); err != nil {
 		h.logger.Error("Renew all validation failed", zap.Error(err))

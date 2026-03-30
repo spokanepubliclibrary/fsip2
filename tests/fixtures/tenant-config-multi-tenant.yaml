@@ -1,0 +1,21 @@
+# Multi-tenant fixture demonstrating the new top-level scTenants format.
+# Used by integration/config tests to validate multi-tenant routing rules.
+
+tenants:
+  - tenant: diku
+    okapiUrl: https://okapi-diku.example.com
+    okapiTenant: diku
+
+  - tenant: snapshot
+    okapiUrl: https://okapi-snapshot.example.com
+    okapiTenant: snapshot
+
+scTenants:
+  - tenant: snapshot
+    port: 6444
+  - tenant: snapshot
+    usernamePrefixes:
+      - "snap_"
+      - "main_sip1"   # full username — valid prefix value, matches exactly
+  - tenant: diku
+    scSubnet: 192.168.1.0/24

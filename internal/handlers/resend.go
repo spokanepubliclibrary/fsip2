@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
 	"go.uber.org/zap"
@@ -19,7 +20,7 @@ type ResendHandler struct {
 func NewResendHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *ResendHandler {
 	return &ResendHandler{
 		BaseHandler: NewBaseHandler(logger, tenantConfig),
-		logger:      logger,
+		logger:      logger.With(logging.TypeField(logging.TypeApplication)),
 	}
 }
 

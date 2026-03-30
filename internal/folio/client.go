@@ -9,7 +9,18 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
+	"go.uber.org/zap"
 )
+
+// Package-level logger for client operations (can be set via SetClientLogger)
+var clientLogger *zap.Logger
+
+// SetClientLogger sets the logger for HTTP client operations
+func SetClientLogger(logger *zap.Logger) {
+	clientLogger = logger
+}
 
 var (
 	// sharedHTTPClient is a package-level shared HTTP client with connection pooling
@@ -42,6 +53,7 @@ type Client struct {
 	baseURL    string
 	tenant     string
 	timeout    time.Duration
+	logger     *zap.Logger
 }
 
 // NewClient creates a new FOLIO API client using a shared HTTP client with connection pooling
@@ -54,6 +66,7 @@ func NewClient(baseURL, tenant string) *Client {
 		baseURL:    baseURL,
 		tenant:     tenant,
 		timeout:    30 * time.Second,
+		logger:     clientLogger,
 	}
 }
 
@@ -134,6 +147,16 @@ func (c *Client) doRequestWithCustomAccept(ctx context.Context, method, path, to
 		req.Header.Set("X-Okapi-Token", token)
 	}
 
+	// Log the outbound request (debug only)
+	if c.logger != nil {
+		c.logger.Debug("FOLIO API request",
+			logging.TypeField(logging.TypeFolioRequest),
+			zap.String("method", method),
+			zap.String("url", url),
+			zap.String("tenant", c.tenant),
+		)
+	}
+
 	// Perform the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -149,6 +172,15 @@ func (c *Client) doRequestWithCustomAccept(ctx context.Context, method, path, to
 
 	// Check for HTTP errors
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if c.logger != nil {
+			c.logger.Debug("FOLIO API response",
+				logging.TypeField(logging.TypeFolioResponse),
+				zap.String("method", method),
+				zap.String("url", url),
+				zap.Int("status_code", resp.StatusCode),
+				zap.Int("response_bytes", len(respBody)),
+			)
+		}
 		return &HTTPError{
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,
@@ -156,6 +188,17 @@ func (c *Client) doRequestWithCustomAccept(ctx context.Context, method, path, to
 			URL:        url,
 			Method:     method,
 		}
+	}
+
+	// Log the successful response (debug only)
+	if c.logger != nil {
+		c.logger.Debug("FOLIO API response",
+			logging.TypeField(logging.TypeFolioResponse),
+			zap.String("method", method),
+			zap.String("url", url),
+			zap.Int("status_code", resp.StatusCode),
+			zap.Int("response_bytes", len(respBody)),
+		)
 	}
 
 	// Parse response if result is provided (only for JSON responses)
