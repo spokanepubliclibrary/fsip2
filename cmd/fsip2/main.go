@@ -100,6 +100,20 @@ func run(configFile string, logFile string) error {
 		}
 	}()
 
+	// Start configuration reloader if tenant config sources are defined
+	if len(cfg.TenantConfigSources) > 0 {
+		reloader := config.NewReloader(cfg, nil)
+		if err := reloader.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start config reloader: %w", err)
+		}
+		logger.Debug("Configuration reloader started",
+			logging.TypeField(logging.TypeApplication),
+			zap.Duration("scan_period", cfg.GetScanPeriod()),
+			zap.Int("sources", len(cfg.TenantConfigSources)),
+		)
+		defer reloader.Stop()
+	}
+
 	// Create and start SIP2 server
 	sip2Server, err := server.NewServer(cfg, logger)
 	if err != nil {
