@@ -288,6 +288,41 @@ func TestClone(t *testing.T) {
 	}
 }
 
+func TestSession_SetPatronBarcode(t *testing.T) {
+	s := NewSession("s1", nil)
+	s.SetPatronBarcode("barcode-xyz")
+	if got := s.GetPatronBarcode(); got != "barcode-xyz" {
+		t.Errorf("GetPatronBarcode = %q, want %q", got, "barcode-xyz")
+	}
+}
+
+func TestSession_SetPatronID_Standalone(t *testing.T) {
+	s := NewSession("s1", nil)
+	s.SetPatronID("patron-123")
+	if got := s.GetPatronID(); got != "patron-123" {
+		t.Errorf("GetPatronID = %q, want %q", got, "patron-123")
+	}
+}
+
+func TestSession_PatronBarcode_ConcurrentAccess(t *testing.T) {
+	s := NewSession("s1", nil)
+	var wg sync.WaitGroup
+	const goroutines = 10
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(2)
+		go func(n int) {
+			defer wg.Done()
+			s.SetPatronBarcode("barcode-" + string(rune('A'+n)))
+		}(i)
+		go func() {
+			defer wg.Done()
+			_ = s.GetPatronBarcode()
+		}()
+	}
+	wg.Wait()
+}
+
 func TestConcurrentAccess(t *testing.T) {
 	s := NewSession("s1", nil)
 	var wg sync.WaitGroup

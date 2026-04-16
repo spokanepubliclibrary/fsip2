@@ -103,6 +103,13 @@ func (h *FeePaidHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 
 	// Get patron ID and user info (from session or lookup)
 	patronID := session.GetPatronID()
+	if patronID != "" && session.GetPatronBarcode() != patronIdentifier {
+		h.logger.Info("Patron barcode mismatch — invalidating cached patron ID",
+			zap.String("cached_barcode", session.GetPatronBarcode()),
+			zap.String("request_barcode", patronIdentifier),
+		)
+		patronID = ""
+	}
 	var userID string
 
 	// Create patron client for lookup or verification
@@ -120,6 +127,8 @@ func (h *FeePaidHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 		}
 		patronID = user.ID
 		userID = user.ID
+		session.SetPatronBarcode(patronIdentifier)
+		session.SetPatronID(user.ID)
 	} else {
 		userID = patronID
 	}

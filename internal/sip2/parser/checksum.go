@@ -65,38 +65,26 @@ func ValidateChecksum(message string, encoder encoding.Encoding) (*ChecksumResul
 		actualMessageContent = messageContent[:azIndex]
 	}
 
-	// Encode the message content to bytes using the specified character set
-	messageBytes, err := encoder.NewEncoder().Bytes([]byte(actualMessageContent))
+	// Reconstruct the full string that was originally checksummed, in one piece.
+	// CalculateChecksum always builds: message + fieldDelimiter + "AY" + sequenceNumber + "AZ"
+	// actualMessageContent = messageContent[:ayIndex], so it already includes the trailing
+	// field delimiter that CalculateChecksum prepended before "AY". No extra delimiter needed.
+	var fullString string
+	if ayIndex != -1 {
+		fullString = actualMessageContent + "AY" + sequenceNumber + "AZ"
+	} else {
+		// No AY/AZ found — encode whatever content we have up to AZ.
+		fullString = actualMessageContent + "AZ"
+	}
+
+	// Encode the entire reconstructed string in ONE call to avoid split-encoder bugs.
+	messageBytes, err := encoder.NewEncoder().Bytes([]byte(fullString))
 	if err != nil {
 		return &ChecksumResult{
 			Valid:   false,
 			Message: fmt.Sprintf("encoding error: %v", err),
 		}, fmt.Errorf("failed to encode message: %w", err)
 	}
-
-	// Also encode AY field if present
-	if ayIndex != -1 {
-		ayField := "AY" + sequenceNumber
-		ayBytes, err := encoder.NewEncoder().Bytes([]byte(ayField))
-		if err != nil {
-			return &ChecksumResult{
-				Valid:   false,
-				Message: fmt.Sprintf("encoding error for AY field: %v", err),
-			}, fmt.Errorf("failed to encode AY field: %w", err)
-		}
-		messageBytes = append(messageBytes, ayBytes...)
-	}
-
-	// Encode AZ field
-	azField := "AZ"
-	azBytes, err := encoder.NewEncoder().Bytes([]byte(azField))
-	if err != nil {
-		return &ChecksumResult{
-			Valid:   false,
-			Message: fmt.Sprintf("encoding error for AZ field: %v", err),
-		}, fmt.Errorf("failed to encode AZ field: %w", err)
-	}
-	messageBytes = append(messageBytes, azBytes...)
 
 	// Sum all byte values
 	sum := 0

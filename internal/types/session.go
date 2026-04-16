@@ -118,6 +118,20 @@ func (s *Session) GetPatronID() string {
 	return s.PatronID
 }
 
+// SetPatronID sets the patron ID
+func (s *Session) SetPatronID(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.PatronID = id
+}
+
+// SetPatronBarcode sets the patron barcode
+func (s *Session) SetPatronBarcode(barcode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.PatronBarcode = barcode
+}
+
 // GetPatronBarcode returns the patron barcode
 func (s *Session) GetPatronBarcode() string {
 	s.mu.RLock()
