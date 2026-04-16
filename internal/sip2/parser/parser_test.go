@@ -215,6 +215,132 @@ func TestFixedFieldExtraction(t *testing.T) {
 	}
 }
 
+// TestParseSCStatus_FullFixedFields verifies that a minimal SCStatus message
+// (8-byte fixed region, no variable fields) parses correctly and that
+// "3.00" is returned as protocol_version via ExtractFixedFields and does
+// NOT appear as a spurious variable-length field.
+func TestParseSCStatus_FullFixedFields(t *testing.T) {
+	cfg := &config.TenantConfig{
+		Tenant:                "test",
+		MessageDelimiter:      "\r",
+		FieldDelimiter:        "|",
+		ErrorDetectionEnabled: false,
+		Charset:               "UTF-8",
+	}
+
+	parser := NewParser(cfg)
+
+	// SCStatus: 99 + status_code(1) + max_print_width(3) + protocol_version(4)
+	// "0" = ok, "080" = 80 cols, "3.00" = protocol version
+	message := "9900803.00"
+
+	msg, err := parser.Parse(message)
+	if err != nil {
+		t.Fatalf("Failed to parse SCStatus message: %v", err)
+	}
+
+	if msg.Code != SCStatus {
+		t.Errorf("Expected message code %s, got %s", SCStatus, msg.Code)
+	}
+
+	// ExtractFixedFields should return protocol_version = "3.00"
+	fixed := parser.ExtractFixedFields(msg)
+	if fixed["protocol_version"] != "3.00" {
+		t.Errorf("Expected protocol_version '3.00', got '%s'", fixed["protocol_version"])
+	}
+
+	// The protocol_version bytes must NOT be parsed as variable-length fields.
+	// Before fixed-field merging, Fields should only contain fixed fields merged in.
+	// Verify "3." and "00" or any 2-char prefix of "3.00" is not a spurious var field.
+	for k := range msg.Fields {
+		if k == "3." || k == "00" || k == "3 " {
+			t.Errorf("Unexpected variable field '%s' parsed from fixed-field region", k)
+		}
+	}
+}
+
+// TestParseSCStatus_ProtocolVersionNotPollutingVarFields verifies that ParseMessage
+// produces zero variable-length fields for a bare SCStatus message (no AO/AA/etc fields).
+func TestParseSCStatus_ProtocolVersionNotPollutingVarFields(t *testing.T) {
+	cfg := &config.TenantConfig{
+		Tenant:                "test",
+		MessageDelimiter:      "\r",
+		FieldDelimiter:        "|",
+		ErrorDetectionEnabled: false,
+		Charset:               "UTF-8",
+	}
+
+	parser := NewParser(cfg)
+
+	// Same minimal SCStatus — no variable-length fields appended
+	message := "9900803.00"
+
+	msg, err := parser.Parse(message)
+	if err != nil {
+		t.Fatalf("Failed to parse SCStatus message: %v", err)
+	}
+
+	// Fields map is populated by merging fixed fields into it.
+	// The only keys present should be the fixed-field names, not spurious var field codes.
+	// Specifically, variable-field parsing must have produced an empty result (fieldsStart >= len).
+	// We confirm by checking MultiValueFields is empty (var-field parser was never fed "3.00").
+	if len(msg.MultiValueFields) != 0 {
+		t.Errorf("Expected zero multi-value fields, got %d: %v", len(msg.MultiValueFields), msg.MultiValueFields)
+	}
+
+	// Fields should contain exactly the fixed fields (status_code, max_print_width, protocol_version)
+	// and nothing that looks like it came from parsing "3.00" as field data.
+	knownFixedKeys := map[string]bool{
+		"status_code":      true,
+		"max_print_width":  true,
+		"protocol_version": true,
+	}
+	for k := range msg.Fields {
+		if !knownFixedKeys[k] {
+			t.Errorf("Unexpected field '%s' in parsed message — may indicate variable-field parser consumed fixed-field bytes", k)
+		}
+	}
+}
+
+// TestParseSCStatus_WithVariableFields verifies that a SCStatus message with
+// appended variable-length fields parses both the fixed fields and variable
+// fields correctly.
+func TestParseSCStatus_WithVariableFields(t *testing.T) {
+	cfg := &config.TenantConfig{
+		Tenant:                "test",
+		MessageDelimiter:      "\r",
+		FieldDelimiter:        "|",
+		ErrorDetectionEnabled: false,
+		Charset:               "UTF-8",
+	}
+
+	parser := NewParser(cfg)
+
+	// SCStatus with AO (institution ID) variable field appended
+	message := "9900803.00AO12345|"
+
+	msg, err := parser.Parse(message)
+	if err != nil {
+		t.Fatalf("Failed to parse SCStatus message with variable fields: %v", err)
+	}
+
+	if msg.Code != SCStatus {
+		t.Errorf("Expected message code %s, got %s", SCStatus, msg.Code)
+	}
+
+	// Variable field AO must be parsed correctly
+	institution := msg.GetField(InstitutionID)
+	if institution != "12345" {
+		t.Errorf("Expected institution ID '12345', got '%s'", institution)
+	}
+
+	// Fixed field protocol_version must still be correct
+	fixed := parser.ExtractFixedFields(msg)
+	if fixed["protocol_version"] != "3.00" {
+		t.Errorf("Expected protocol_version '3.00', got '%s'", fixed["protocol_version"])
+	}
+}
+
 func TestMessageCodeDetection(t *testing.T) {
 	tests := []struct {
 		message      string

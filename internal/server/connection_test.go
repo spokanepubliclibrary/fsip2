@@ -917,6 +917,104 @@ func TestReadMessageDelimiterDetection(t *testing.T) {
 	}
 }
 
+// TestReadMessage_MaxSizeGuard tests the maxSIP2MessageBytes size guard in readMessage.
+// The guard fires when len(message) > maxSIP2MessageBytes (65536), so exactly 65536
+// bytes of payload (plus delimiter) must succeed, while 65537+ bytes with no delimiter
+// must return the "exceeded maximum size" error.
+func TestReadMessage_MaxSizeGuard(t *testing.T) {
+	t.Parallel()
+
+	const delimiter = "|"
+	const maxBytes = 64 * 1024 // must match maxSIP2MessageBytes in connection.go
+
+	buildConn := func(t *testing.T, input []byte) *Connection {
+		t.Helper()
+		tc := &config.TenantConfig{
+			Tenant:           "test",
+			MessageDelimiter: delimiter,
+		}
+		mc := &mockConn{
+			readBuf:  bytes.NewBuffer(input),
+			writeBuf: &bytes.Buffer{},
+		}
+		sess := types.NewSession("test-session", tc)
+		logger, _ := zap.NewDevelopment()
+		cfg := &config.Config{OkapiURL: "https://folio.example.com"}
+		srv, _ := NewServer(cfg, logger)
+		ts := tenant.NewService(cfg)
+		return NewConnection(mc, sess, ts, make(map[parser.MessageCode]MessageHandler), srv)
+	}
+
+	tests := []struct {
+		name        string
+		buildInput  func() []byte
+		wantErr     bool
+		errContains string
+		wantLen     int // expected payload byte length (ignored when wantErr is true)
+	}{
+		{
+			name: "WithinLimit — 1000-byte payload plus delimiter succeeds",
+			buildInput: func() []byte {
+				payload := bytes.Repeat([]byte("A"), 1000)
+				return append(payload, []byte(delimiter)...)
+			},
+			wantErr: false,
+			wantLen: 1000,
+		},
+		{
+			name: "ExactlyAtLimit — 65536-byte payload plus delimiter succeeds",
+			buildInput: func() []byte {
+				// 65536 bytes == maxBytes; guard fires only when len > maxBytes,
+				// so this must return successfully.
+				payload := bytes.Repeat([]byte("B"), maxBytes)
+				return append(payload, []byte(delimiter)...)
+			},
+			wantErr: false,
+			wantLen: maxBytes,
+		},
+		{
+			name: "ExceedsLimit — 65537 bytes with no delimiter returns error",
+			buildInput: func() []byte {
+				// One byte over the limit, no delimiter — the guard triggers before
+				// EOF is reached.
+				return bytes.Repeat([]byte("C"), maxBytes+1)
+			},
+			wantErr:     true,
+			errContains: "exceeded maximum size",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt // capture range variable
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			input := tt.buildInput()
+			conn := buildConn(t, input)
+			reader := bufio.NewReader(bytes.NewReader(input))
+
+			msg, err := conn.readMessage(reader)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("readMessage() expected error containing %q, got nil error (message len=%d)", tt.errContains, len(msg))
+				}
+				if !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("readMessage() error = %q, want it to contain %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("readMessage() unexpected error: %v", err)
+			}
+			if len(msg) != tt.wantLen {
+				t.Errorf("readMessage() returned %d bytes, want %d", len(msg), tt.wantLen)
+			}
+		})
+	}
+}
+
 // TestHandleLoginTenantResolution_UsernamePrefix — CN field (LoginUserID) drives tenant
 // resolution via UsernamePrefixes. The AA field (PatronIdentifier) is intentionally absent
 // so the test fails if the implementation reads PatronIdentifier instead of LoginUserID.

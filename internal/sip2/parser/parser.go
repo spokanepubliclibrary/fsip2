@@ -209,8 +209,8 @@ func (p *Parser) Parse(rawMessage string) (*Message, error) {
 		}
 	case SCStatus:
 		// 99<status_code><max_print_width><protocol_version>
-		if len(messageContent) >= 4 { // 1 + 3
-			fieldsStart = 4
+		if len(messageContent) >= 8 { // 1 + 3 + 4
+			fieldsStart = 8
 		}
 	default:
 		// For other messages, variable-length fields start immediately

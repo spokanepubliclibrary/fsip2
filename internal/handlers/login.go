@@ -56,6 +56,20 @@ func (h *LoginHandler) Handle(ctx context.Context, msg *parser.Message, session 
 		session.SetLocationCode(locationCode)
 	}
 
+	// Short-circuit: if the session already holds a valid (non-expired) token for
+	// this user, skip the FOLIO round-trip entirely.  The per-request AuthClient
+	// created below discards its TokenCache on return, so calling it again when the
+	// token is still good wastes a network call and loses any cache benefit.
+	if session.IsAuth() && !session.IsTokenExpired() {
+		h.logger.Info("Login skipped — session token still valid",
+			zap.String("username", username),
+			zap.String("session_id", session.ID),
+			zap.Time("token_expires_at", session.GetTokenExpiresAt()),
+		)
+		h.logResponse(string(parser.LoginResponse), session, nil)
+		return h.buildLoginResponse(true, msg.SequenceNumber, session), nil
+	}
+
 	// Create auth client with token cache capacity of 100
 	authClient := folio.NewAuthClient(session.TenantConfig.OkapiURL, session.TenantConfig.OkapiTenant, 100)
 

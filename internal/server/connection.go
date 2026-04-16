@@ -18,6 +18,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const maxSIP2MessageBytes = 64 * 1024 // 64 KB — well above any valid SIP2 message
+
 // Connection represents a single SIP2 client connection
 type Connection struct {
 	conn          net.Conn
@@ -166,6 +168,13 @@ func (c *Connection) readMessage(reader *bufio.Reader) (string, error) {
 					message = message[:len(message)-len(delimiter)]
 					break
 				}
+			}
+
+			// Guard against unbounded reads — checked after delimiter detection so that
+			// a payload of exactly maxSIP2MessageBytes followed by a delimiter succeeds:
+			// the delimiter bytes are consumed and stripped before we reach this check.
+			if len(message) > maxSIP2MessageBytes {
+				return "", fmt.Errorf("message exceeded maximum size of %d bytes", maxSIP2MessageBytes)
 			}
 		}
 	}

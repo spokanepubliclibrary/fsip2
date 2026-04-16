@@ -3,6 +3,7 @@ package folio
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -353,4 +354,85 @@ func TestSetClientLogger_SetsPackageVar(t *testing.T) {
 	logger := zap.New(core)
 	SetClientLogger(logger)
 	assert.Equal(t, logger, clientLogger)
+}
+
+// Tests for SetTimeout behavior applied to real HTTP requests
+
+// TestSetTimeout_AppliedToRequest verifies that a timeout shorter than the
+// server's response time causes the request to fail with context.DeadlineExceeded.
+func TestSetTimeout_AppliedToRequest(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Sleep longer than the client timeout so the deadline fires first.
+		time.Sleep(200 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test-tenant")
+	client.SetTimeout(100 * time.Millisecond)
+
+	var result map[string]interface{}
+	err := client.Get(context.Background(), "/slow", "tok", &result)
+
+	require.Error(t, err, "expected an error when server is slower than client timeout")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected errors.Is(err, context.DeadlineExceeded), got: %v", err)
+	}
+}
+
+// TestSetTimeout_Zero_NoExtraDeadline verifies that SetTimeout(0) disables the
+// per-request deadline so a fast server response succeeds without error.
+func TestSetTimeout_Zero_NoExtraDeadline(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Respond quickly — well within any reasonable transport timeout.
+		time.Sleep(10 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test-tenant")
+	client.SetTimeout(0) // disable per-request timeout
+
+	var result map[string]string
+	err := client.Get(context.Background(), "/fast", "tok", &result)
+
+	require.NoError(t, err, "expected success when timeout is zero and server responds quickly")
+}
+
+// TestSetTimeout_ShorterThanGlobalTimeout verifies that a 50 ms per-request
+// timeout fires well before the 30 s shared HTTP client transport timeout.
+func TestSetTimeout_ShorterThanGlobalTimeout(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Sleep long enough that only the per-request timeout, not the global
+		// 30 s transport timeout, would cancel the request.
+		time.Sleep(200 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test-tenant")
+	client.SetTimeout(50 * time.Millisecond)
+
+	start := time.Now()
+	var result map[string]interface{}
+	err := client.Get(context.Background(), "/slow", "tok", &result)
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "expected timeout error")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected errors.Is(err, context.DeadlineExceeded), got: %v", err)
+	}
+	// The per-request deadline should have fired well before the 30 s global timeout.
+	// Allow generous headroom (500 ms) for slow CI, but ensure it didn't run for seconds.
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("request took %v — expected to time out at ~50 ms, not at the 30 s global timeout", elapsed)
+	}
 }

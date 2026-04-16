@@ -70,8 +70,10 @@ func NewClient(baseURL, tenant string) *Client {
 	}
 }
 
-// SetTimeout sets the timeout for this client instance
-// Note: This does not modify the shared HTTP client, but uses context timeouts instead
+// SetTimeout sets the per-request timeout for this client instance.
+// On each request, a context.WithTimeout deadline of this duration is applied,
+// cancelling the request if it does not complete within the allotted time.
+// This does not modify the shared HTTP client; the deadline is enforced via context.
 func (c *Client) SetTimeout(timeout time.Duration) {
 	c.timeout = timeout
 }
