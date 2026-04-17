@@ -3,6 +3,7 @@
 # Build variables
 BINARY_NAME=fsip2
 VERSION=1.0.0
+REGISTRY=registry.gitlab.com/spokanepubliclibrary/folio-go-sip2
 BUILD_DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 GIT_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.buildDate=$(BUILD_DATE) -X main.gitCommit=$(GIT_COMMIT)"
@@ -104,10 +105,22 @@ lint:
 	$(GOFMT) ./...
 
 # Build Docker image
-docker:
+docker: build
 	@echo "Building Docker image..."
 	docker build -t $(BINARY_NAME):$(VERSION) .
-	docker tag $(BINARY_NAME):$(VERSION) $(BINARY_NAME):latest
+
+docker-tag: docker
+	@echo "Tagging Docker image with version..."
+	docker tag $(BINARY_NAME):$(VERSION) $(REGISTRY):$(VERSION)
+
+docker-latest: docker
+	@echo "Tagging Docker image as latest..."
+	docker tag $(BINARY_NAME):$(VERSION) $(REGISTRY):latest
+
+docker-push: docker-tag docker-latest
+	@echo "Pushing Docker images to registry..."
+	docker push $(REGISTRY):$(VERSION)
+	docker push $(REGISTRY):latest
 
 # Run Docker image
 docker-run:
