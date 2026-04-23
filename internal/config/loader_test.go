@@ -219,6 +219,51 @@ tenants:
 	}
 }
 
+func TestLoadTenantConfigsOrdered(t *testing.T) {
+	multiYAML := `
+tenants:
+  - tenant: first
+    okapiUrl: http://first.example.com
+    okapiTenant: first
+  - tenant: second
+    okapiUrl: http://second.example.com
+    okapiTenant: second
+  - tenant: third
+    okapiUrl: http://third.example.com
+    okapiTenant: third
+`
+	tmpFile := writeTempFile(t, multiYAML)
+
+	cfg := &Config{
+		TenantConfigSources: []ConfigSource{
+			{Type: "file", Path: tmpFile},
+		},
+		Tenants: make(map[string]*TenantConfig),
+	}
+	if err := cfg.loadTenantConfigs(); err != nil {
+		t.Fatalf("loadTenantConfigs() failed: %v", err)
+	}
+
+	// TenantsOrdered must be non-nil and non-empty
+	if len(cfg.TenantsOrdered) == 0 {
+		t.Fatal("Expected TenantsOrdered to be non-empty after loading a multi-tenant config")
+	}
+
+	// Length must match the Tenants map
+	if len(cfg.TenantsOrdered) != len(cfg.Tenants) {
+		t.Errorf("TenantsOrdered length %d does not match Tenants map length %d",
+			len(cfg.TenantsOrdered), len(cfg.Tenants))
+	}
+
+	// Order must match YAML declaration order
+	wantOrder := []string{"first", "second", "third"}
+	for i, tc := range cfg.TenantsOrdered {
+		if tc.Tenant != wantOrder[i] {
+			t.Errorf("TenantsOrdered[%d]: expected %q, got %q", i, wantOrder[i], tc.Tenant)
+		}
+	}
+}
+
 func TestFileLoader_Load_ListFormat_InvalidRollingRenewals(t *testing.T) {
 	// One tenant has invalid rolling renewals — error should include the tenant name.
 	badYAML := `

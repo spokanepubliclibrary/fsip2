@@ -138,6 +138,7 @@ func (r *Reloader) reload() error {
 
 	// Load tenant configs from all sources
 	newTenants := make(map[string]*TenantConfig)
+	newTenantsOrdered := make([]*TenantConfig, 0)
 	var newSCTenants []SCTenantConfig
 
 	for _, loader := range r.loaders {
@@ -149,6 +150,7 @@ func (r *Reloader) reload() error {
 
 		for _, tenantCfg := range tenantCfgs {
 			newTenants[tenantCfg.Tenant] = tenantCfg
+			newTenantsOrdered = append(newTenantsOrdered, tenantCfg)
 		}
 
 		newSCTenants = append(newSCTenants, scTenants...)
@@ -159,6 +161,7 @@ func (r *Reloader) reload() error {
 		// Update configuration
 		r.config.Tenants = newTenants
 		r.config.SCTenants = newSCTenants
+		r.config.TenantsOrdered = newTenantsOrdered
 
 		// Call onChange callback if provided
 		if r.onChange != nil {

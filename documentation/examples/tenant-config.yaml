@@ -6,6 +6,10 @@
 # Multi-tenant SC routing (optional, top-level)
 # Each entry maps connection-property rules to a tenant. First match wins.
 scTenants:
+  # Tenants with rules are matched first (port, subnet, locationCodes, usernamePrefixes).
+  # A scTenant entry with NO rules acts as the explicit catch-all default.
+  # It should be declared last, though order does not affect matching — only
+  # the absence of rules determines catch-all status.
   - tenant: snapshot
     port: 6444
 

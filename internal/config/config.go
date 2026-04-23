@@ -23,7 +23,8 @@ type Config struct {
 	TLS                 *TLSConfig     `yaml:"tls,omitempty"`
 
 	// Runtime tenant configurations (loaded from sources)
-	Tenants map[string]*TenantConfig `yaml:"-"`
+	Tenants        map[string]*TenantConfig `yaml:"-"`
+	TenantsOrdered []*TenantConfig          `yaml:"-"`
 
 	// Top-level SC tenant configurations (loaded from sources)
 	SCTenants []SCTenantConfig `yaml:"-"`
@@ -202,6 +203,7 @@ func (c *Config) loadTenantConfigs() error {
 
 		for _, tenantCfg := range tenantCfgs {
 			c.Tenants[tenantCfg.Tenant] = tenantCfg
+			c.TenantsOrdered = append(c.TenantsOrdered, tenantCfg)
 		}
 
 		c.SCTenants = append(c.SCTenants, scTenants...)
