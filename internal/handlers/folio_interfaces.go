@@ -52,6 +52,7 @@ type FeesOps interface {
 	GetOpenAccountsExcludingSuspended(ctx context.Context, token, userID string) (*models.AccountCollection, error)
 	GetEligibleAccountByID(ctx context.Context, token, accountID string) (*models.Account, error)
 	PayAccount(ctx context.Context, token, accountID string, payment *models.PaymentRequest) (*models.PaymentResponse, error)
+	PayBulkAccounts(ctx context.Context, token string, payment *models.Payment) error
 }
 
 // Compile-time assertions: these lines fail to compile if the concrete folio

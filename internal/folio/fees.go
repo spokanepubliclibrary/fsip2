@@ -83,6 +83,12 @@ func (fc *FeesClient) GetEligibleAccountByID(ctx context.Context, token string, 
 	return nil, nil
 }
 
+// PayBulkAccounts pays multiple accounts via the FOLIO /accounts-bulk/pay endpoint.
+// FOLIO handles balance-aware distribution server-side.
+func (fc *FeesClient) PayBulkAccounts(ctx context.Context, token string, payment *models.Payment) error {
+	return fc.client.Post(ctx, "/accounts-bulk/pay", token, payment, nil)
+}
+
 // PayAccount pays a specific account using the /accounts/{accountId}/pay endpoint
 // Returns the payment response with remainingAmount and feefineactions
 func (fc *FeesClient) PayAccount(ctx context.Context, token string, accountID string, payment *models.PaymentRequest) (*models.PaymentResponse, error) {
