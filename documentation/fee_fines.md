@@ -118,7 +118,7 @@ The following tenant configuration options control payment behavior:
 
 - **paymentMethod**: Method of payment (e.g., "Cash", "Credit Card")
 - **notifyPatron**: Whether to send notification to patron (boolean)
-- **acceptBulkPayment**: Whether to allow bulk payment mode (boolean)
+- **acceptBulkPayment**: Whether to allow bulk payment mode (boolean). When `true`, fsip2 falls back to `/accounts-bulk/pay` when no CG field is provided or when the identified account is not eligible.
 
 ### Single Account Payment
 
@@ -130,27 +130,23 @@ When a **CG field** (account ID) is provided:
    - Account must be open
    - Account must not be suspended claim returned
 3. **Applies full payment** to the specified account
-4. **Fallback behavior**: If account not eligible and `acceptBulkPayment` is enabled, falls back to bulk payment
+4. **Fallback behavior**: If account not eligible and `acceptBulkPayment` is enabled, falls back to bulk payment via `/accounts-bulk/pay`
 
-See [fee_paid.go:212-269](../../internal/handlers/fee_paid.go#L212-L269) for single payment implementation.
+See `internal/handlers/fee_paid.go` for the single payment implementation.
 
 ### Bulk Payment
 
-When **no CG field** is provided OR when single payment falls back:
+When **no CG field** is provided (or the identified account is not eligible) and `acceptBulkPayment` is `true`, fsip2 fetches all eligible open accounts for the patron (excluding accounts with `paymentStatus` of `Suspended claim returned`), caps the payment amount to the total outstanding balance, and sends a single request to FOLIO's `/accounts-bulk/pay` endpoint with the total amount and all eligible account IDs. FOLIO distributes the payment across accounts server-side, capping each account at its remaining balance.
 
-1. **Retrieves all eligible accounts** for the patron
-2. **Distributes payment evenly** across all accounts:
-   - Base amount = `floor(total_amount / account_count * 100) / 100`
-   - Remainder goes to the last account
-3. **Processes each payment** individually
-4. **Partial success handling**: Continues processing even if some payments fail
+**Over-payment behavior**: If the requested payment amount exceeds the patron's total outstanding balance, fsip2 caps the payment to the total outstanding amount before calling the API. This matches the behavior of the Java reference implementation and prevents FOLIO from rejecting the payment with a 422 error.
 
-Example distribution for $10.00 across 3 accounts:
-- Account 1: $3.33
-- Account 2: $3.33
-- Account 3: $3.34 (receives remainder)
+**Distribution behavior**: With the bulk payment endpoint, the server distributes the payment proportionally across all eligible accounts simultaneously. Previously, accounts were paid sequentially until the amount was exhausted. Library staff should be aware of this operational change.
 
-See [fee_paid.go:271-365](../../internal/handlers/fee_paid.go#L271-L365) for bulk payment implementation.
+**`amount` field**: The `amount` field is sent as a formatted string (e.g., `"3.00"`) per the FOLIO API spec, not as a JSON number.
+
+**Worked example**: A patron has three open accounts: $0.50, $0.50, and $2.00 (total outstanding: $3.00). The SIP2 client sends a Fee Paid (37) message with amount=$3.00 and no CG field. With `acceptBulkPayment=true`, fsip2 fetches the three eligible account IDs, confirms the total outstanding is $3.00, and sends one request to `/accounts-bulk/pay` with `{ "amount": "3.00", "accountIds": ["acc-a", "acc-b", "acc-c"], ... }`. FOLIO applies $0.50, $0.50, and $2.00 to each account respectively and returns a success response.
+
+See `internal/handlers/fee_paid.go`, function `payBulkAccounts`, for the bulk payment implementation.
 
 ### Payment Response Format (Message 38)
 
@@ -169,8 +165,7 @@ See [fee_paid.go:271-365](../../internal/handlers/fee_paid.go#L271-L365) for bul
 
 **Screen Messages**:
 - Single payment: `AFPayment accepted`
-- Bulk payment (all succeeded): `AFBulk payment applied`
-- Bulk payment (partial failure): `AFBulk payment applied - see staff for details`
+- Bulk payment (success): `AFBulk payment applied`
 
 Example successful response:
 ```
@@ -210,17 +205,22 @@ Eligible?      v                v
 /      \    Bulk Payment    Return Error
 YES     NO     |
 |       |      v
-|       |   Distribute
-|       |   Across All
-|       |   Accounts
+|       |   Cap amount to
+|       |   total outstanding
+|       |      |
+|       |      v
+|       |   POST single request
+|       |   to /accounts-bulk/pay
+|       |   (FOLIO distributes
+|       |    server-side)
 |       |      |
 |       +------+
 |              |
 v              v
-Apply      Partial Success
-Payment    Handling
-|              |
-v              v
+Apply      Return 38Y Response
+Payment
+|
+v
 Return 38Y Response
 ```
 
@@ -242,7 +242,6 @@ The payment system includes comprehensive error handling:
 1. **Validation errors**: Invalid amounts, missing fields
 2. **Authentication errors**: Failed patron verification
 3. **Account errors**: Account not found, not eligible
-4. **Partial failures**: Some accounts succeed in bulk payment
-5. **Complete failures**: No payments succeeded
+4. **Payment failures**: FOLIO returns a non-success response (e.g., 422 if amount exceeds balance — fsip2 prevents this by capping the amount before the request)
 
 All errors are logged with structured logging and return appropriate 38N responses with descriptive messages.

@@ -206,8 +206,8 @@ func TestPayAccount_Success(t *testing.T) {
 		var payment models.PaymentRequest
 		json.NewDecoder(r.Body).Decode(&payment)
 
-		if payment.Amount != 10.00 {
-			t.Errorf("Expected payment amount 10.00, got %f", payment.Amount)
+		if payment.Amount != "10.00" {
+			t.Errorf("Expected payment amount 10.00, got %s", payment.Amount)
 		}
 
 		// Return payment response
@@ -225,7 +225,7 @@ func TestPayAccount_Success(t *testing.T) {
 	ctx := context.Background()
 
 	payment := &models.PaymentRequest{
-		Amount:        10.00,
+		Amount:        "10.00",
 		PaymentMethod: "Cash",
 	}
 
@@ -321,8 +321,8 @@ func TestPayFee_Success(t *testing.T) {
 		var payment models.Payment
 		json.NewDecoder(r.Body).Decode(&payment)
 
-		if payment.Amount != 10.00 {
-			t.Errorf("Expected amount 10.00, got %f", payment.Amount)
+		if payment.Amount != "10.00" {
+			t.Errorf("Expected amount 10.00, got %s", payment.Amount)
 		}
 
 		w.WriteHeader(http.StatusCreated)
@@ -333,7 +333,7 @@ func TestPayFee_Success(t *testing.T) {
 	ctx := context.Background()
 
 	payment := &models.Payment{
-		Amount:         10.00,
+		Amount:         "10.00",
 		PaymentMethod:  "Cash",
 		ServicePointID: "sp-123",
 		UserName:       "admin",
@@ -466,5 +466,76 @@ func TestGetOutstandingAccounts_Success(t *testing.T) {
 	// This depends on the IsOutstanding method
 	if len(outstanding) == 0 {
 		t.Error("Expected at least one outstanding account")
+	}
+}
+
+func TestPayBulkAccounts_PostsToCorrectEndpoint(t *testing.T) {
+	var capturedPath string
+	var capturedMethod string
+	var capturedBody models.Payment
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		capturedMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+			t.Errorf("Failed to decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	client := NewFeesClient(server.URL, "test-tenant")
+	ctx := context.Background()
+
+	payment := &models.Payment{
+		Amount:         "3.00",
+		AccountIds:     []string{"acc-1", "acc-2", "acc-3"},
+		ServicePointID: "sp-abc",
+		UserName:       "staff",
+		PaymentMethod:  "Cash",
+		NotifyPatron:   false,
+	}
+
+	err := client.PayBulkAccounts(ctx, "test-token", payment)
+	if err != nil {
+		t.Fatalf("PayBulkAccounts failed: %v", err)
+	}
+
+	if capturedPath != "/accounts-bulk/pay" {
+		t.Errorf("Expected path /accounts-bulk/pay, got %s", capturedPath)
+	}
+	if capturedMethod != http.MethodPost {
+		t.Errorf("Expected POST method, got %s", capturedMethod)
+	}
+	if capturedBody.Amount != "3.00" {
+		t.Errorf("Expected amount '3.00' as string in JSON body, got %q", capturedBody.Amount)
+	}
+	if len(capturedBody.AccountIds) != 3 {
+		t.Errorf("Expected 3 account IDs, got %d", len(capturedBody.AccountIds))
+	}
+	if capturedBody.ServicePointID != "sp-abc" {
+		t.Errorf("Expected servicePointId sp-abc, got %s", capturedBody.ServicePointID)
+	}
+}
+
+func TestPayBulkAccounts_PropagatesAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte(`{"errors":[{"message":"amount exceeds outstanding balance"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewFeesClient(server.URL, "test-tenant")
+	ctx := context.Background()
+
+	payment := &models.Payment{
+		Amount:     "999.00",
+		AccountIds: []string{"acc-1"},
+	}
+
+	err := client.PayBulkAccounts(ctx, "test-token", payment)
+	if err == nil {
+		t.Fatal("Expected error from PayBulkAccounts on HTTP 422, got nil")
 	}
 }

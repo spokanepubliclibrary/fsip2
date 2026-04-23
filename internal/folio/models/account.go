@@ -113,8 +113,8 @@ type FeeFineActionCollection struct {
 
 // Payment represents a payment request for bulk payment operations
 type Payment struct {
-	Amount                 float64  `json:"amount"`
-	TransactionInformation string   `json:"transactionInformation,omitempty"`
+	Amount                 string   `json:"amount"`
+	TransactionInformation string   `json:"transactionInfo,omitempty"`
 	ServicePointID         string   `json:"servicePointId"`
 	UserName               string   `json:"userName"`
 	PaymentMethod          string   `json:"paymentMethod"`
@@ -126,7 +126,7 @@ type Payment struct {
 // PaymentRequest represents a payment request for a single account
 // Used with POST /accounts/{accountId}/pay endpoint
 type PaymentRequest struct {
-	Amount         float64 `json:"amount"`
+	Amount         string `json:"amount"`
 	NotifyPatron   bool    `json:"notifyPatron"`
 	ServicePointID string  `json:"servicePointId"`
 	UserName       string  `json:"userName"`

@@ -254,6 +254,11 @@ func (m *MockFeesClient) PayAccount(ctx context.Context, token, accountID string
 	return args.Get(0).(*models.PaymentResponse), args.Error(1)
 }
 
+func (m *MockFeesClient) PayBulkAccounts(ctx context.Context, token string, payment *models.Payment) error {
+	args := m.Called(ctx, token, payment)
+	return args.Error(0)
+}
+
 // ─── Injection helper ─────────────────────────────────────────────────────────
 
 // injectMocks overrides factory functions on h so that the given mocks are
