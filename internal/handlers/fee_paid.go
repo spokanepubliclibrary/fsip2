@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"time"
 
@@ -250,7 +249,7 @@ func (h *FeePaidHandler) paySingleAccount(
 
 	// Build payment request
 	paymentReq := &models.PaymentRequest{
-		Amount:         amount,
+		Amount:         strconv.FormatFloat(amount, 'f', 2, 64),
 		NotifyPatron:   notifyPatron,
 		ServicePointID: servicePointID,
 		UserName:       username,
@@ -276,13 +275,14 @@ func (h *FeePaidHandler) paySingleAccount(
 	}, false
 }
 
-// payBulkAccounts distributes payment across all eligible open accounts
+// payBulkAccounts pays all eligible open accounts via FOLIO's /accounts-bulk/pay endpoint.
+// FOLIO handles balance-aware distribution server-side.
 func (h *FeePaidHandler) payBulkAccounts(
 	ctx context.Context,
 	feesClient FeesOps,
 	token string,
 	userID string,
-	totalAmount float64,
+	feeAmount float64,
 	servicePointID string,
 	username string,
 	paymentMethod string,
@@ -305,70 +305,57 @@ func (h *FeePaidHandler) payBulkAccounts(
 		return results
 	}
 
-	// Calculate payment distribution
-	// Split evenly with remainder going to last account
-	accountCount := len(accounts.Accounts)
-	baseAmount := math.Floor(totalAmount/float64(accountCount)*100) / 100
-	totalDistributed := baseAmount * float64(accountCount)
-	remainder := totalAmount - totalDistributed
-
-	h.logger.Info("Distributing bulk payment",
-		zap.Int("account_count", accountCount),
-		zap.Float64("total_amount", totalAmount),
-		zap.Float64("base_amount", baseAmount),
-		zap.Float64("remainder", remainder),
-	)
-
-	// Process payments for each account
-	// Continue processing even if some fail (partial success handling)
-	for i, account := range accounts.Accounts {
-		// Calculate amount for this account (last account gets remainder)
-		amountForAccount := baseAmount
-		if i == accountCount-1 {
-			amountForAccount += remainder
-		}
-
-		// Build payment request
-		paymentReq := &models.PaymentRequest{
-			Amount:         amountForAccount,
-			NotifyPatron:   notifyPatron,
-			ServicePointID: servicePointID,
-			UserName:       username,
-			PaymentMethod:  paymentMethod,
-		}
-
-		// Execute payment
-		paymentResp, err := feesClient.PayAccount(ctx, token, account.ID, paymentReq)
-		if err != nil {
-			// Log error but continue processing other accounts
-			h.logger.Error("Failed to pay account in bulk payment",
-				zap.String("account_id", account.ID),
-				zap.Float64("amount", amountForAccount),
-				zap.Error(err),
-			)
-			results = append(results, paymentResult{
-				account:       &account,
-				amountApplied: amountForAccount,
-				success:       false,
-				error:         err,
-			})
-			continue
-		}
-
-		h.logger.Info("Bulk payment applied to account",
-			zap.String("account_id", account.ID),
-			zap.Float64("amount", amountForAccount),
-			zap.String("remaining", paymentResp.RemainingAmount),
-		)
-
-		results = append(results, paymentResult{
-			account:         &account,
-			paymentResponse: paymentResp,
-			amountApplied:   amountForAccount,
-			success:         true,
-		})
+	// Cap payment to total outstanding balance (FOLIO 422s on over-payment; matches Java behavior)
+	var totalOutstanding float64
+	for _, a := range accounts.Accounts {
+		totalOutstanding += a.Remaining.Float64()
+	}
+	if feeAmount > totalOutstanding {
+		feeAmount = totalOutstanding
 	}
 
+	// Collect eligible account IDs
+	accountIDs := make([]string, len(accounts.Accounts))
+	for i, a := range accounts.Accounts {
+		accountIDs[i] = a.ID
+	}
+
+	payment := &models.Payment{
+		Amount:         strconv.FormatFloat(feeAmount, 'f', 2, 64),
+		AccountIds:     accountIDs,
+		ServicePointID: servicePointID,
+		UserName:       username,
+		PaymentMethod:  paymentMethod,
+		NotifyPatron:   notifyPatron,
+	}
+	if err := feesClient.PayBulkAccounts(ctx, token, payment); err != nil {
+		h.logger.Error("Bulk payment failed",
+			zap.String("user_id", userID),
+			zap.Float64("amount", feeAmount),
+			zap.Error(err),
+		)
+		return results
+	}
+
+	h.logger.Info("Bulk payment submitted",
+		zap.String("user_id", userID),
+		zap.Float64("amount", feeAmount),
+		zap.Int("account_count", len(accounts.Accounts)),
+	)
+
+	// Synthesize per-account results from pre-fetched data.
+	// The /accounts-bulk/pay 201 response does not provide per-account breakdown,
+	// so we compute remaining from pre-fetched account state.
+	amountPerAccount := feeAmount / float64(len(accounts.Accounts))
+	results = make([]paymentResult, len(accounts.Accounts))
+	for i, a := range accounts.Accounts {
+		a := a // capture loop var
+		results[i] = paymentResult{
+			account:       &a,
+			amountApplied: amountPerAccount,
+			success:       true,
+		}
+	}
 	return results
 }
 
@@ -429,12 +416,21 @@ func (h *FeePaidHandler) buildSuccessResponse(
 	successCount := 0
 	failureCount := 0
 	for _, result := range results {
-		if result.success && result.account != nil && result.paymentResponse != nil {
+		if result.success && result.account != nil {
 			// CG = Account ID payment was applied to
 			response += fmt.Sprintf("|CG%s", result.account.ID)
 
-			// FA = Remaining balance of the account (from payment response)
-			response += fmt.Sprintf("|FA%s", result.paymentResponse.RemainingAmount)
+			// FA = Remaining balance of the account
+			// Use payment response if available (single-account path); otherwise use synthesized value (bulk path).
+			if result.paymentResponse != nil {
+				response += fmt.Sprintf("|FA%s", result.paymentResponse.RemainingAmount)
+			} else {
+				remaining := result.account.Remaining.Float64() - result.amountApplied
+				if remaining < 0 {
+					remaining = 0
+				}
+				response += fmt.Sprintf("|FA%.2f", remaining)
+			}
 
 			// FC = Payment date in format YYYYMMDD    HHMMSS (4 spaces)
 			paymentDate := protocol.FormatSIP2DateTime(time.Now(), "    ")

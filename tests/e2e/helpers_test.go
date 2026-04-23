@@ -108,6 +108,12 @@ const testServicePointUUID = "test-sp-uuid"
 // buildE2EConfig creates a test config using dynamically allocated ports.
 func buildE2EConfig(t *testing.T, folioURL string) *config.Config {
 	t.Helper()
+	return buildE2EConfigWithOptions(t, folioURL, false)
+}
+
+// buildE2EConfigWithOptions creates a test config with optional bulk-payment support.
+func buildE2EConfigWithOptions(t *testing.T, folioURL string, acceptBulkPayment bool) *config.Config {
+	t.Helper()
 	port, err := getFreePort()
 	require.NoError(t, err, "failed to allocate free SIP2 port")
 	healthPort, err := getFreePort()
@@ -119,11 +125,12 @@ func buildE2EConfig(t *testing.T, folioURL string) *config.Config {
 		HealthCheckPort: healthPort,
 		Tenants: map[string]*config.TenantConfig{
 			"test-inst": {
-				Tenant:           "test-tenant",
-				MessageDelimiter: "\r",
-				FieldDelimiter:   "|",
-				OkapiURL:         folioURL,
-				Charset:          "UTF-8",
+				Tenant:             "test-tenant",
+				MessageDelimiter:   "\r",
+				FieldDelimiter:     "|",
+				OkapiURL:           folioURL,
+				Charset:            "UTF-8",
+				AcceptBulkPayment:  acceptBulkPayment,
 				SupportedMessages: []config.MessageSupport{
 					{Code: "23", Enabled: true}, // Patron Status
 					{Code: "11", Enabled: true}, // Checkout
@@ -141,6 +148,29 @@ func buildE2EConfig(t *testing.T, folioURL string) *config.Config {
 				},
 			},
 		},
+	}
+}
+
+// NewE2ESetupBulk creates an E2ESetup with AcceptBulkPayment=true for the test-inst tenant.
+func NewE2ESetupBulk(t *testing.T) *E2ESetup {
+	t.Helper()
+	mockFolio := mocks.NewFolioMockServer()
+	cfg := buildE2EConfigWithOptions(t, mockFolio.GetURL(), true)
+	logger, _ := logging.NewLogger("warn", "")
+	srv, err := server.NewServer(cfg, logger)
+	require.NoError(t, err)
+	srv.RegisterAllHandlers()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	go srv.Start(ctx)
+	waitForServerReady(t, cfg.Port)
+
+	return &E2ESetup{
+		MockFolio: mockFolio,
+		Server:    srv,
+		Config:    cfg,
+		Port:      cfg.Port,
+		cancel:    cancel,
 	}
 }
 

@@ -35,6 +35,8 @@ type FolioMockServer struct {
 	TokenLifetime   int                                 // ExpiresIn value to return (0 = use default 3600)
 	RejectLogins    bool                                // When true, reject all login attempts (for testing refresh failure)
 	LoginCount      int                                 // Number of successful logins (for verification)
+	BulkPayCallCount int                               // Number of POST /accounts-bulk/pay calls received
+	BulkPayRequests  []models.Payment                  // All bulk payment request bodies received
 }
 
 // NewFolioMockServer creates a new mock FOLIO server
@@ -110,6 +112,8 @@ func (m *FolioMockServer) handler(w http.ResponseWriter, r *http.Request) {
 		m.handleManualBlocks(w, r)
 	case strings.HasPrefix(r.URL.Path, "/automated-patron-blocks/"):
 		m.handleAutomatedBlocks(w, r)
+	case strings.HasPrefix(r.URL.Path, "/accounts-bulk"):
+		m.handleBulkPayAccounts(w, r)
 	case strings.HasPrefix(r.URL.Path, "/accounts"):
 		m.handleAccounts(w, r)
 	case strings.HasPrefix(r.URL.Path, "/patron-pin/verify"):
@@ -533,9 +537,11 @@ func (m *FolioMockServer) handleAccounts(w http.ResponseWriter, r *http.Request)
 	m.handleGetAccounts(w, r)
 }
 
-// handleGetAccounts handles GET /accounts?query=... matching by userId or id
+// handleGetAccounts handles GET /accounts?query=... matching by userId or id.
+// It honours the CQL clause paymentStatus.name<>"Suspended claim returned" when present.
 func (m *FolioMockServer) handleGetAccounts(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("query")
+	excludeSuspended := strings.Contains(query, `paymentStatus.name<>"Suspended claim returned"`)
 
 	var matchingAccounts []models.Account
 
@@ -545,6 +551,9 @@ func (m *FolioMockServer) handleGetAccounts(w http.ResponseWriter, r *http.Reque
 			userID := rest[:end]
 			for _, account := range m.Accounts {
 				if account.UserID == userID {
+					if excludeSuspended && account.PaymentStatus.Name == "Suspended claim returned" {
+						continue
+					}
 					matchingAccounts = append(matchingAccounts, *account)
 				}
 			}
@@ -554,7 +563,9 @@ func (m *FolioMockServer) handleGetAccounts(w http.ResponseWriter, r *http.Reque
 		if end := strings.Index(rest, `"`); end >= 0 {
 			accountID := rest[:end]
 			if account, ok := m.Accounts[accountID]; ok {
-				matchingAccounts = append(matchingAccounts, *account)
+				if !excludeSuspended || account.PaymentStatus.Name != "Suspended claim returned" {
+					matchingAccounts = append(matchingAccounts, *account)
+				}
 			}
 		}
 	}
@@ -568,6 +579,25 @@ func (m *FolioMockServer) handleGetAccounts(w http.ResponseWriter, r *http.Reque
 		TotalRecords: len(matchingAccounts),
 	}
 	json.NewEncoder(w).Encode(response)
+}
+
+// handleBulkPayAccounts handles POST /accounts-bulk/pay
+func (m *FolioMockServer) handleBulkPayAccounts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var payReq models.Payment
+	if err := json.NewDecoder(r.Body).Decode(&payReq); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	m.BulkPayCallCount++
+	m.BulkPayRequests = append(m.BulkPayRequests, payReq)
+
+	w.WriteHeader(http.StatusCreated)
 }
 
 // handlePayAccount handles POST /accounts/{id}/pay
