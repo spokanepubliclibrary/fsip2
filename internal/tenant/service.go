@@ -25,24 +25,34 @@ func NewService(cfg *config.Config) *Service {
 		tenantConfigs:    cfg.Tenants,
 	}
 
-	// Find default tenant config: use first tenant not referenced by any SCTenant entry
-	referencedTenants := make(map[string]bool)
+	// Priority 1: explicit catch-all — scTenant with no routing rules
 	for _, scTenant := range cfg.SCTenants {
-		referencedTenants[scTenant.Tenant] = true
-	}
-	for _, tenantCfg := range cfg.Tenants {
-		if !referencedTenants[tenantCfg.Tenant] {
-			s.defaultConfig = tenantCfg
-			break
+		if scTenant.SCSubnet == "" && scTenant.Port == 0 &&
+			len(scTenant.LocationCodes) == 0 && len(scTenant.UsernamePrefixes) == 0 {
+			if tenantCfg, ok := cfg.Tenants[scTenant.Tenant]; ok {
+				s.defaultConfig = tenantCfg
+				break
+			}
 		}
 	}
 
-	// If no default found, use first tenant
-	if s.defaultConfig == nil && len(cfg.Tenants) > 0 {
-		for _, tenantCfg := range cfg.Tenants {
-			s.defaultConfig = tenantCfg
-			break
+	// Priority 2: first tenant in declaration order not referenced by any scTenant
+	if s.defaultConfig == nil {
+		referencedTenants := make(map[string]bool)
+		for _, scTenant := range cfg.SCTenants {
+			referencedTenants[scTenant.Tenant] = true
 		}
+		for _, tenantCfg := range cfg.TenantsOrdered {
+			if !referencedTenants[tenantCfg.Tenant] {
+				s.defaultConfig = tenantCfg
+				break
+			}
+		}
+	}
+
+	// Priority 3: absolute fallback — first declared tenant
+	if s.defaultConfig == nil && len(cfg.TenantsOrdered) > 0 {
+		s.defaultConfig = cfg.TenantsOrdered[0]
 	}
 
 	// Initialize default resolvers

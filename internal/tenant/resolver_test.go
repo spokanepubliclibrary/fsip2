@@ -9,14 +9,16 @@ import (
 
 // TestNewService tests service creation
 func TestNewService(t *testing.T) {
+	defaultCfg := &config.TenantConfig{
+		Tenant:   "default",
+		OkapiURL: "https://folio.example.com",
+	}
 	cfg := &config.Config{
 		OkapiURL: "https://folio.example.com",
 		Tenants: map[string]*config.TenantConfig{
-			"default": {
-				Tenant:   "default",
-				OkapiURL: "https://folio.example.com",
-			},
+			"default": defaultCfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{defaultCfg},
 	}
 
 	svc := NewService(cfg)
@@ -33,14 +35,45 @@ func TestNewService(t *testing.T) {
 	}
 }
 
-// TestResolveAtConnectDefault tests connection resolution with default tenant
-func TestResolveAtConnectDefault(t *testing.T) {
+// TestNewServiceDefaultTenantDeterminism proves that NewService picks the first
+// unreferenced tenant in TenantsOrdered declaration order, not map iteration order.
+func TestNewServiceDefaultTenantDeterminism(t *testing.T) {
+	alphaCfg := &config.TenantConfig{Tenant: "alpha", OkapiURL: "https://alpha.example.com"}
+	betaCfg := &config.TenantConfig{Tenant: "beta", OkapiURL: "https://beta.example.com"}
+	gammaCfg := &config.TenantConfig{Tenant: "gamma", OkapiURL: "https://gamma.example.com"}
+
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
-			"default": {
-				Tenant: "default",
-			},
+			"alpha": alphaCfg,
+			"beta":  betaCfg,
+			"gamma": gammaCfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{alphaCfg, betaCfg, gammaCfg},
+		SCTenants: []config.SCTenantConfig{
+			{Tenant: "alpha", Port: 6001},
+			{Tenant: "beta", Port: 6002},
+		},
+	}
+
+	svc := NewService(cfg)
+
+	defaultTenant := svc.GetDefaultTenant()
+	if defaultTenant == nil {
+		t.Fatal("GetDefaultTenant() should not return nil")
+	}
+	if defaultTenant.Tenant != "gamma" {
+		t.Errorf("Expected default tenant 'gamma' (first unreferenced in TenantsOrdered), got '%s'", defaultTenant.Tenant)
+	}
+}
+
+// TestResolveAtConnectDefault tests connection resolution with default tenant
+func TestResolveAtConnectDefault(t *testing.T) {
+	defaultCfg := &config.TenantConfig{Tenant: "default"}
+	cfg := &config.Config{
+		Tenants: map[string]*config.TenantConfig{
+			"default": defaultCfg,
+		},
+		TenantsOrdered: []*config.TenantConfig{defaultCfg},
 	}
 
 	svc := NewService(cfg)
@@ -56,19 +89,22 @@ func TestResolveAtConnectDefault(t *testing.T) {
 
 // TestResolveAtConnectWithIPResolver tests IP-based resolution using top-level SCTenants.
 func TestResolveAtConnectWithIPResolver(t *testing.T) {
+	defaultCfg := &config.TenantConfig{
+		Tenant:      "default",
+		OkapiURL:    "https://default.example.com",
+		OkapiTenant: "default",
+	}
+	tenant1Cfg := &config.TenantConfig{
+		Tenant:      "tenant1",
+		OkapiURL:    "https://tenant1.example.com",
+		OkapiTenant: "tenant1",
+	}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
-			"default": {
-				Tenant:      "default",
-				OkapiURL:    "https://default.example.com",
-				OkapiTenant: "default",
-			},
-			"tenant1": {
-				Tenant:      "tenant1",
-				OkapiURL:    "https://tenant1.example.com",
-				OkapiTenant: "tenant1",
-			},
+			"default": defaultCfg,
+			"tenant1": tenant1Cfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{defaultCfg, tenant1Cfg},
 		SCTenants: []config.SCTenantConfig{
 			{
 				Tenant:   "tenant1",
@@ -104,19 +140,22 @@ func TestResolveAtConnectWithIPResolver(t *testing.T) {
 // TestResolveAtConnectWithPortResolver tests port-based resolution using top-level SCTenants.
 // Verifies that the resolver is registered with the correct looked-up TenantConfig.
 func TestResolveAtConnectWithPortResolver(t *testing.T) {
+	defaultCfg := &config.TenantConfig{
+		Tenant:      "default",
+		OkapiURL:    "https://default.example.com",
+		OkapiTenant: "default",
+	}
+	tenant2Cfg := &config.TenantConfig{
+		Tenant:      "tenant2",
+		OkapiURL:    "https://tenant2.example.com",
+		OkapiTenant: "tenant2",
+	}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
-			"default": {
-				Tenant:      "default",
-				OkapiURL:    "https://default.example.com",
-				OkapiTenant: "default",
-			},
-			"tenant2": {
-				Tenant:      "tenant2",
-				OkapiURL:    "https://tenant2.example.com",
-				OkapiTenant: "tenant2",
-			},
+			"default": defaultCfg,
+			"tenant2": tenant2Cfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{defaultCfg, tenant2Cfg},
 		SCTenants: []config.SCTenantConfig{
 			{
 				Tenant: "tenant2",
@@ -160,15 +199,17 @@ func TestResolveAtLoginWithLocationCode(t *testing.T) {
 		OkapiTenant: "default",
 	}
 
+	tenant3Cfg := &config.TenantConfig{
+		Tenant:      "tenant3",
+		OkapiURL:    "https://tenant3.example.com",
+		OkapiTenant: "tenant3",
+	}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
 			"default": defaultConfig,
-			"tenant3": {
-				Tenant:      "tenant3",
-				OkapiURL:    "https://tenant3.example.com",
-				OkapiTenant: "tenant3",
-			},
+			"tenant3": tenant3Cfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{defaultConfig, tenant3Cfg},
 		SCTenants: []config.SCTenantConfig{
 			{
 				Tenant:        "tenant3",
@@ -207,15 +248,17 @@ func TestResolveAtLoginWithUsernamePrefix(t *testing.T) {
 		OkapiTenant: "default",
 	}
 
+	tenant4Cfg := &config.TenantConfig{
+		Tenant:      "tenant4",
+		OkapiURL:    "https://tenant4.example.com",
+		OkapiTenant: "tenant4",
+	}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
 			"default": defaultConfig,
-			"tenant4": {
-				Tenant:      "tenant4",
-				OkapiURL:    "https://tenant4.example.com",
-				OkapiTenant: "tenant4",
-			},
+			"tenant4": tenant4Cfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{defaultConfig, tenant4Cfg},
 		SCTenants: []config.SCTenantConfig{
 			{
 				Tenant:           "tenant4",
@@ -260,15 +303,17 @@ func TestResolveAtLoginWithFullUsernamePrefix(t *testing.T) {
 		OkapiTenant: "default",
 	}
 
+	mainCfg := &config.TenantConfig{
+		Tenant:      "main",
+		OkapiURL:    "https://main.example.com",
+		OkapiTenant: "main",
+	}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
 			"default": defaultConfig,
-			"main": {
-				Tenant:      "main",
-				OkapiURL:    "https://main.example.com",
-				OkapiTenant: "main",
-			},
+			"main":    mainCfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{defaultConfig, mainCfg},
 		SCTenants: []config.SCTenantConfig{
 			{
 				Tenant:           "main",
@@ -305,13 +350,15 @@ func TestResolveAtLoginWithFullUsernamePrefix(t *testing.T) {
 // TestSCTenantUnknownTenantSkipped verifies that an SCTenant referencing a name not present
 // in cfg.Tenants is skipped gracefully — no panic, and no resolver is registered.
 func TestSCTenantUnknownTenantSkipped(t *testing.T) {
+	defaultCfg := &config.TenantConfig{
+		Tenant:   "default",
+		OkapiURL: "https://default.example.com",
+	}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
-			"default": {
-				Tenant:   "default",
-				OkapiURL: "https://default.example.com",
-			},
+			"default": defaultCfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{defaultCfg},
 		SCTenants: []config.SCTenantConfig{
 			{
 				Tenant:   "nonexistent",
@@ -341,12 +388,12 @@ func TestSCTenantUnknownTenantSkipped(t *testing.T) {
 
 // TestGetDefaultTenant tests getting default tenant
 func TestGetDefaultTenant(t *testing.T) {
+	defaultCfg := &config.TenantConfig{Tenant: "default"}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
-			"default": {
-				Tenant: "default",
-			},
+			"default": defaultCfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{defaultCfg},
 	}
 
 	svc := NewService(cfg)
@@ -363,15 +410,14 @@ func TestGetDefaultTenant(t *testing.T) {
 
 // TestGetTenantByName tests retrieving tenants by name
 func TestGetTenantByName(t *testing.T) {
+	tenant1Cfg := &config.TenantConfig{Tenant: "tenant1"}
+	tenant2Cfg := &config.TenantConfig{Tenant: "tenant2"}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
-			"tenant1": {
-				Tenant: "tenant1",
-			},
-			"tenant2": {
-				Tenant: "tenant2",
-			},
+			"tenant1": tenant1Cfg,
+			"tenant2": tenant2Cfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{tenant1Cfg, tenant2Cfg},
 	}
 
 	svc := NewService(cfg)
@@ -395,11 +441,14 @@ func TestGetTenantByName(t *testing.T) {
 
 // TestGetAllTenants tests getting all tenant configurations
 func TestGetAllTenants(t *testing.T) {
+	tenant1Cfg := &config.TenantConfig{Tenant: "tenant1"}
+	tenant2Cfg := &config.TenantConfig{Tenant: "tenant2"}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
-			"tenant1": {Tenant: "tenant1"},
-			"tenant2": {Tenant: "tenant2"},
+			"tenant1": tenant1Cfg,
+			"tenant2": tenant2Cfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{tenant1Cfg, tenant2Cfg},
 	}
 
 	svc := NewService(cfg)
@@ -420,15 +469,18 @@ func TestGetAllTenants(t *testing.T) {
 
 // TestGetResolverCount tests getting resolver counts using top-level SCTenants.
 func TestGetResolverCount(t *testing.T) {
+	defaultCfg := &config.TenantConfig{Tenant: "default"}
+	tenant1Cfg := &config.TenantConfig{
+		Tenant:      "tenant1",
+		OkapiURL:    "https://tenant1.example.com",
+		OkapiTenant: "tenant1",
+	}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
-			"default": {Tenant: "default"},
-			"tenant1": {
-				Tenant:      "tenant1",
-				OkapiURL:    "https://tenant1.example.com",
-				OkapiTenant: "tenant1",
-			},
+			"default": defaultCfg,
+			"tenant1": tenant1Cfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{defaultCfg, tenant1Cfg},
 		SCTenants: []config.SCTenantConfig{
 			{
 				Tenant:           "tenant1",
@@ -457,14 +509,17 @@ func TestGetResolverCount(t *testing.T) {
 
 // TestResolverPriority tests that resolvers are sorted by priority using top-level SCTenants.
 func TestResolverPriority(t *testing.T) {
+	defaultCfg := &config.TenantConfig{Tenant: "default"}
+	tenant1Cfg := &config.TenantConfig{
+		Tenant:   "tenant1",
+		OkapiURL: "https://tenant1.example.com",
+	}
 	cfg := &config.Config{
 		Tenants: map[string]*config.TenantConfig{
-			"default": {Tenant: "default"},
-			"tenant1": {
-				Tenant:   "tenant1",
-				OkapiURL: "https://tenant1.example.com",
-			},
+			"default": defaultCfg,
+			"tenant1": tenant1Cfg,
 		},
+		TenantsOrdered: []*config.TenantConfig{defaultCfg, tenant1Cfg},
 		SCTenants: []config.SCTenantConfig{
 			{
 				Tenant:   "tenant1",
@@ -543,6 +598,47 @@ func TestByPrioritySwap(t *testing.T) {
 	}
 	if bp[1].Name() != "r1" {
 		t.Errorf("After Swap: bp[1].Name() = %q, expected %q", bp[1].Name(), "r1")
+	}
+}
+
+// TestNewServiceCatchAllSCTenant verifies that when ALL tenants are referenced by scTenant entries,
+// the one with no routing fields (empty SCSubnet, zero Port, no LocationCodes, no UsernamePrefixes)
+// is picked as the default via the explicit catch-all logic (Priority 1 in NewService).
+func TestNewServiceCatchAllSCTenant(t *testing.T) {
+	defaultCfg := &config.TenantConfig{
+		Tenant:   "default",
+		OkapiURL: "https://default.example.com",
+	}
+	institutionCfg := &config.TenantConfig{
+		Tenant:   "institution-test",
+		OkapiURL: "https://institution.example.com",
+	}
+
+	cfg := &config.Config{
+		Tenants: map[string]*config.TenantConfig{
+			"default":          defaultCfg,
+			"institution-test": institutionCfg,
+		},
+		TenantsOrdered: []*config.TenantConfig{defaultCfg, institutionCfg},
+		SCTenants: []config.SCTenantConfig{
+			// "default" has no routing fields — explicit catch-all
+			{Tenant: "default"},
+			// "institution-test" has a routing rule
+			{Tenant: "institution-test", Port: 6444},
+		},
+	}
+
+	svc := NewService(cfg)
+
+	defaultTenant := svc.GetDefaultTenant()
+	if defaultTenant == nil {
+		t.Fatal("GetDefaultTenant() should not return nil")
+	}
+	if defaultTenant.Tenant != "default" {
+		t.Errorf("Expected default tenant 'default' (explicit catch-all scTenant), got '%s'", defaultTenant.Tenant)
+	}
+	if defaultTenant.Tenant == "institution-test" {
+		t.Error("Default tenant must not be 'institution-test'")
 	}
 }
 
