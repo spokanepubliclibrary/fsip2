@@ -50,6 +50,8 @@ type TLSConfig struct {
 // TenantConfig represents configuration for a specific tenant
 type TenantConfig struct {
 	Tenant                string `yaml:"tenant"`
+	InstitutionID         string `yaml:"institutionID,omitempty"` // AO field in 98 response; falls back to Tenant if omitted
+	LibraryName           string `yaml:"libraryName,omitempty"`   // AM field in 98 response; falls back to InstitutionID then Tenant if omitted
 	ErrorDetectionEnabled bool   `yaml:"errorDetectionEnabled"`
 	MessageDelimiter      string `yaml:"messageDelimiter"`
 	FieldDelimiter        string `yaml:"fieldDelimiter"`
@@ -678,4 +680,23 @@ func (tc *TenantConfig) MapClaimedReturnedResolutionToFOLIO() string {
 	default:
 		return ""
 	}
+}
+
+// GetInstitutionID returns the institution ID for use in the AO field of the 98 (ACS Status) response.
+// The 99 (SC Status) request carries no AO field, so the 98 response cannot echo it.
+// Instead the value is sourced from config: InstitutionID if set, otherwise Tenant.
+func (tc *TenantConfig) GetInstitutionID() string {
+	if tc.InstitutionID != "" {
+		return tc.InstitutionID
+	}
+	return tc.Tenant
+}
+
+// GetLibraryName returns the human-readable library name for use in the AM field of the 98 (ACS Status) response.
+// Falls back through: LibraryName → InstitutionID → Tenant.
+func (tc *TenantConfig) GetLibraryName() string {
+	if tc.LibraryName != "" {
+		return tc.LibraryName
+	}
+	return tc.GetInstitutionID()
 }

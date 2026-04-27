@@ -85,9 +85,10 @@ func TestSCStatusHandler_Handle_WithInstitutionID(t *testing.T) {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	// Verify response contains the tenant name as institution ID (AO is a pure echo for SC Status)
+	// 99 (SC Status) carries no AO field — the 98 response uses configured InstitutionID
+	// (falling back to Tenant). With no InstitutionID set, Tenant is used.
 	if !strings.Contains(response, "AOtest-library") {
-		t.Errorf("Response should contain tenant name as institution ID, got: %s", response)
+		t.Errorf("Response should contain tenant name as institution ID fallback, got: %s", response)
 	}
 }
 
@@ -529,6 +530,108 @@ func TestSCStatusHandler_TerminalLocation(t *testing.T) {
 					// AN field exists and has a value
 					t.Errorf("Did not expect AN field with value in response when no location code set, got: %s", response)
 				}
+			}
+		})
+	}
+}
+
+func TestSCStatusHandler_Handle_WithExplicitInstitutionID(t *testing.T) {
+	tenantConfig := &config.TenantConfig{
+		Tenant:           "folio-tenant",
+		InstitutionID:    "Spokane Public Library",
+		MessageDelimiter: "\r",
+		FieldDelimiter:   "|",
+	}
+
+	logger := zap.NewNop()
+	handler := NewSCStatusHandler(logger, tenantConfig)
+	session := types.NewSession("test-session", tenantConfig)
+
+	msg := &parser.Message{
+		Code:   parser.SCStatus,
+		Fields: make(map[string]string),
+	}
+
+	ctx := context.Background()
+	response, err := handler.Handle(ctx, msg, session)
+
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	// AO must use InstitutionID, not Tenant
+	if !strings.Contains(response, "AOSpokane Public Library") {
+		t.Errorf("Expected AO to use InstitutionID, got: %s", response)
+	}
+	if strings.Contains(response, "AOfolio-tenant") {
+		t.Errorf("AO must not fall back to Tenant when InstitutionID is set, got: %s", response)
+	}
+}
+
+func TestSCStatusHandler_Handle_LibraryNameFallback(t *testing.T) {
+	tests := []struct {
+		name          string
+		tenant        string
+		institutionID string
+		libraryName   string
+		wantAO        string
+		wantAM        string
+	}{
+		{
+			name:          "all three set — AM uses LibraryName, AO uses InstitutionID",
+			tenant:        "folio-tenant",
+			institutionID: "SPL",
+			libraryName:   "Spokane Public Library",
+			wantAO:        "AOSPL",
+			wantAM:        "AMSpokane Public Library",
+		},
+		{
+			name:          "no LibraryName — AM falls back to InstitutionID",
+			tenant:        "folio-tenant",
+			institutionID: "SPL",
+			libraryName:   "",
+			wantAO:        "AOSPL",
+			wantAM:        "AMSPL",
+		},
+		{
+			name:          "LibraryName set but InstitutionID empty — AO uses Tenant, AM uses LibraryName",
+			tenant:        "folio-tenant",
+			institutionID: "",
+			libraryName:   "Spokane Public Library",
+			wantAO:        "AOfolio-tenant",
+			wantAM:        "AMSpokane Public Library",
+		},
+		{
+			name:          "only Tenant set — both AO and AM use Tenant",
+			tenant:        "folio-tenant",
+			institutionID: "",
+			libraryName:   "",
+			wantAO:        "AOfolio-tenant",
+			wantAM:        "AMfolio-tenant",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tenantConfig := &config.TenantConfig{
+				Tenant:           tt.tenant,
+				InstitutionID:    tt.institutionID,
+				LibraryName:      tt.libraryName,
+				MessageDelimiter: "\r",
+				FieldDelimiter:   "|",
+			}
+
+			logger := zap.NewNop()
+			handler := NewSCStatusHandler(logger, tenantConfig)
+			session := types.NewSession("test-session", tenantConfig)
+
+			response := handler.buildACSStatusResponse(session, "0")
+
+			if !strings.Contains(response, tt.wantAO) {
+				t.Errorf("Expected AO=%q in response, got: %s", tt.wantAO, response)
+			}
+			if !strings.Contains(response, tt.wantAM) {
+				t.Errorf("Expected AM=%q in response, got: %s", tt.wantAM, response)
 			}
 		})
 	}

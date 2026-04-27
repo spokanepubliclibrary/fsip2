@@ -192,6 +192,19 @@ tenants:
     timeoutPeriod: 30    # Timeout in seconds (000-999) sent in 98 response (default: 30)
     retriesAllowed: 3    # Number of retries allowed (000-999) sent in 98 response (default: 3)
 
+    # Institution identity fields for the 98 (ACS Status Response)
+    # Unlike other SIP2 messages where AO is echoed from the client request, the 99 (SC Status)
+    # request carries no AO field. The ACS must therefore source these values from config.
+    #
+    # institutionID: value placed in the AO field of the 98 response (human-readable institution identifier).
+    #                Falls back to the `tenant` value if omitted.
+    #                NOTE: libraryName has no effect on AO. To change AO away from `tenant`, set institutionID.
+    # libraryName:   value placed in the AM field of the 98 response (human-readable display name).
+    #                Falls back to institutionID, then tenant, if omitted.
+    #                Setting libraryName without institutionID will improve AM but leave AO equal to `tenant`.
+    institutionID: "DIKU Library"   # AO in 98 response; defaults to tenant if omitted
+    libraryName:   "DIKU Library"   # AM in 98 response; defaults to institutionID then tenant if omitted
+
     # Maximum items to process in a Renew All request (default: 50)
     # This limits the number of items renewed in a single 65 (Renew All) request
     # to prevent performance issues with large patron loan counts
