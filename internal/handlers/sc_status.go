@@ -91,10 +91,11 @@ func (h *SCStatusHandler) buildACSStatusResponse(session *types.Session, sequenc
 	// Protocol version
 	protocolVersion := "2.00"
 
-	// Institution details — SC Status (msg 99) carries no AO field; use configured tenant name
-	institutionID := session.TenantConfig.Tenant
-
-	libraryName := session.TenantConfig.Tenant
+	// 99 (SC Status) carries no AO field — there is nothing to echo. AO in the 98
+	// response identifies this ACS to the SC using the configured InstitutionID
+	// (falls back to Tenant). AM uses LibraryName (falls back to InstitutionID then Tenant).
+	institutionID := session.TenantConfig.GetInstitutionID()
+	libraryName := session.TenantConfig.GetLibraryName()
 
 	// Supported messages (BX field) - built from configuration
 	supportedMessages := session.TenantConfig.BuildSupportedMessages()

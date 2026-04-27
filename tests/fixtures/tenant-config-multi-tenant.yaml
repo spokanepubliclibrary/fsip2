@@ -5,10 +5,13 @@ tenants:
   - tenant: diku
     okapiUrl: https://okapi-diku.example.com
     okapiTenant: diku
+    institutionID: "DIKU Library"     # AO field in 98 response
+    libraryName:   "DIKU Test Library" # AM field in 98 response
 
   - tenant: snapshot
     okapiUrl: https://okapi-snapshot.example.com
     okapiTenant: snapshot
+    # institutionID and libraryName omitted — both fall back to tenant value ("snapshot")
 
 scTenants:
   - tenant: snapshot

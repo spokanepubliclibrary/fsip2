@@ -182,6 +182,102 @@ func TestTenantConfig_GetRenewAllMaxItems(t *testing.T) {
 	}
 }
 
+// TestTenantConfig_GetInstitutionID tests the GetInstitutionID fallback chain
+func TestTenantConfig_GetInstitutionID(t *testing.T) {
+	tests := []struct {
+		name          string
+		tenant        string
+		institutionID string
+		expected      string
+	}{
+		{
+			name:          "InstitutionID set — returned as-is",
+			tenant:        "folio-tenant",
+			institutionID: "Spokane Public Library",
+			expected:      "Spokane Public Library",
+		},
+		{
+			name:          "InstitutionID empty — falls back to Tenant",
+			tenant:        "folio-tenant",
+			institutionID: "",
+			expected:      "folio-tenant",
+		},
+		{
+			name:          "Both empty — returns empty string",
+			tenant:        "",
+			institutionID: "",
+			expected:      "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := &TenantConfig{
+				Tenant:        tt.tenant,
+				InstitutionID: tt.institutionID,
+			}
+			result := tc.GetInstitutionID()
+			if result != tt.expected {
+				t.Errorf("GetInstitutionID() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestTenantConfig_GetLibraryName tests the GetLibraryName fallback chain
+func TestTenantConfig_GetLibraryName(t *testing.T) {
+	tests := []struct {
+		name          string
+		tenant        string
+		institutionID string
+		libraryName   string
+		expected      string
+	}{
+		{
+			name:          "LibraryName set — returned as-is",
+			tenant:        "folio-tenant",
+			institutionID: "SPL",
+			libraryName:   "Spokane Public Library",
+			expected:      "Spokane Public Library",
+		},
+		{
+			name:          "LibraryName empty — falls back to InstitutionID",
+			tenant:        "folio-tenant",
+			institutionID: "SPL",
+			libraryName:   "",
+			expected:      "SPL",
+		},
+		{
+			name:          "LibraryName and InstitutionID empty — falls back to Tenant",
+			tenant:        "folio-tenant",
+			institutionID: "",
+			libraryName:   "",
+			expected:      "folio-tenant",
+		},
+		{
+			name:          "All empty — returns empty string",
+			tenant:        "",
+			institutionID: "",
+			libraryName:   "",
+			expected:      "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := &TenantConfig{
+				Tenant:        tt.tenant,
+				InstitutionID: tt.institutionID,
+				LibraryName:   tt.libraryName,
+			}
+			result := tc.GetLibraryName()
+			if result != tt.expected {
+				t.Errorf("GetLibraryName() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestConfig_GetScanPeriod tests the GetScanPeriod method
 func TestConfig_GetScanPeriod(t *testing.T) {
 	tests := []struct {
