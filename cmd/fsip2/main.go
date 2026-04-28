@@ -100,9 +100,24 @@ func run(configFile string, logFile string) error {
 		}
 	}()
 
+	// Create and start SIP2 server
+	sip2Server, err := server.NewServer(cfg, logger)
+	if err != nil {
+		return fmt.Errorf("failed to create server: %w", err)
+	}
+
+	// Register all SIP2 message handlers
+	sip2Server.RegisterAllHandlers()
+
 	// Start configuration reloader if tenant config sources are defined
 	if len(cfg.TenantConfigSources) > 0 {
-		reloader := config.NewReloader(cfg, nil)
+		reloader := config.NewReloader(cfg, logger, func(updated *config.Config) {
+			logger.Info("Configuration reloaded",
+				logging.TypeField(logging.TypeApplication),
+				zap.Int("tenant_count", len(updated.GetTenants())),
+			)
+			sip2Server.GetTenantService().Reinitialize(updated)
+		})
 		if err := reloader.Start(ctx); err != nil {
 			return fmt.Errorf("failed to start config reloader: %w", err)
 		}
@@ -113,15 +128,6 @@ func run(configFile string, logFile string) error {
 		)
 		defer reloader.Stop()
 	}
-
-	// Create and start SIP2 server
-	sip2Server, err := server.NewServer(cfg, logger)
-	if err != nil {
-		return fmt.Errorf("failed to create server: %w", err)
-	}
-
-	// Register all SIP2 message handlers
-	sip2Server.RegisterAllHandlers()
 
 	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)

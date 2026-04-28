@@ -230,7 +230,7 @@ func (s *Server) Start(ctx context.Context) error {
 func uniqueScTenantPorts(cfg *config.Config) []int {
 	seen := map[int]bool{cfg.Port: true}
 	var ports []int
-	for _, sc := range cfg.SCTenants {
+	for _, sc := range cfg.GetSCTenants() {
 		if sc.Port > 0 && !seen[sc.Port] {
 			seen[sc.Port] = true
 			ports = append(ports, sc.Port)

@@ -57,7 +57,11 @@
 // # Hot-Reload
 //
 // Configuration hot-reload allows updating settings without restarting the server:
-//   - Periodic scanning of config file (default: every 60 seconds)
+//   - Periodic scanning of config file controlled by the scanPeriod field
+//   - scanPeriod is specified in milliseconds in the YAML config file
+//   - GetScanPeriod() converts the raw integer to a time.Duration
+//   - Default (if scanPeriod is unset or 0): 300000 ms (5 minutes)
+//   - Minimum effective value: 1000 ms (values below this are treated as default)
 //   - Automatic reload when file modification time changes
 //   - Thread-safe configuration updates (RWMutex)
 //   - Validation before applying new configuration

@@ -24,7 +24,8 @@ data:
     tokenCacheCapacity: 100
     tokenCacheTTL: 3600
 
-    # Configuration reload interval (milliseconds)
+    # How often (in milliseconds) to poll for tenant config changes. Default: 300000 (5 minutes).
+    # Set to 0 to use the default. Minimum effective value: 1000ms.
     scanPeriod: 300000
 
     # Tenant configuration sources

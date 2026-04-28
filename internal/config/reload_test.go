@@ -4,8 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // createTestReloader creates a minimal reloader with a file-based config source
@@ -31,7 +35,7 @@ func createTestReloader(t *testing.T, tenantYAML string, onChangeCallback func(*
 		},
 	}
 
-	reloader := NewReloader(cfg, onChangeCallback)
+	reloader := NewReloader(cfg, zap.NewNop(), onChangeCallback)
 	return reloader, tenantFile
 }
 
@@ -47,7 +51,7 @@ func TestNewReloader(t *testing.T) {
 		Tenants:    make(map[string]*TenantConfig),
 	}
 
-	reloader := NewReloader(cfg, nil)
+	reloader := NewReloader(cfg, zap.NewNop(), nil)
 	if reloader == nil {
 		t.Fatal("Expected non-nil reloader")
 	}
@@ -61,7 +65,7 @@ func TestNewReloader(t *testing.T) {
 
 func TestReloader_IsRunning_InitiallyFalse(t *testing.T) {
 	cfg := &Config{ScanPeriod: 1000, Tenants: make(map[string]*TenantConfig)}
-	reloader := NewReloader(cfg, nil)
+	reloader := NewReloader(cfg, zap.NewNop(), nil)
 
 	if reloader.IsRunning() {
 		t.Error("Expected IsRunning to be false before Start()")
@@ -105,7 +109,7 @@ func TestReloader_Start_AlreadyRunning(t *testing.T) {
 
 func TestReloader_Stop_NotRunning(t *testing.T) {
 	cfg := &Config{ScanPeriod: 1000, Tenants: make(map[string]*TenantConfig)}
-	reloader := NewReloader(cfg, nil)
+	reloader := NewReloader(cfg, zap.NewNop(), nil)
 	reloader.Stop() // should not panic
 }
 
@@ -115,7 +119,7 @@ func TestReloader_GetCurrentConfig(t *testing.T) {
 		OkapiURL:   "http://test.example.com",
 		Tenants:    make(map[string]*TenantConfig),
 	}
-	reloader := NewReloader(cfg, nil)
+	reloader := NewReloader(cfg, zap.NewNop(), nil)
 
 	result := reloader.GetCurrentConfig()
 	if result != cfg {
@@ -128,7 +132,7 @@ func TestReloader_GetCurrentConfig(t *testing.T) {
 
 func TestReloader_UpdateInterval(t *testing.T) {
 	cfg := &Config{ScanPeriod: 1000, Tenants: make(map[string]*TenantConfig)}
-	reloader := NewReloader(cfg, nil)
+	reloader := NewReloader(cfg, zap.NewNop(), nil)
 
 	newInterval := 5 * time.Second
 	reloader.UpdateInterval(newInterval)
@@ -189,7 +193,7 @@ func TestReloader_Start_UnsupportedSourceType(t *testing.T) {
 			{Type: "unsupported", Path: "/some/path"},
 		},
 	}
-	reloader := NewReloader(cfg, nil)
+	reloader := NewReloader(cfg, zap.NewNop(), nil)
 
 	ctx := context.Background()
 	err := reloader.Start(ctx)
@@ -439,4 +443,138 @@ func TestReloader_TriggerReload_FlatFormat_LogsError(t *testing.T) {
 	if len(cfg.Tenants) != 0 {
 		t.Errorf("Expected Tenants map to remain empty after flat-format load, got %v", cfg.Tenants)
 	}
+}
+
+func TestReloader_OnChange_CalledOnTenantFileChange(t *testing.T) {
+	initialYAML := `
+tenants:
+  - tenant: onChange-test
+    okapiUrl: http://localhost:9130
+`
+	var callCount atomic.Int32
+
+	reloader, tenantFile := createTestReloader(t, initialYAML, func(cfg *Config) {
+		callCount.Add(1)
+	})
+
+	// Start to initialize loaders, then stop so we control reloads manually
+	ctx := context.Background()
+	if err := reloader.Start(ctx); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	reloader.Stop()
+
+	// Initial reload — populates tenants; onChange should NOT fire (nothing changed yet)
+	if err := reloader.TriggerReload(); err != nil {
+		t.Fatalf("Initial TriggerReload() failed: %v", err)
+	}
+	beforeCount := callCount.Load()
+
+	// Overwrite the tenant file with a second tenant
+	updatedYAML := `
+tenants:
+  - tenant: onChange-test
+    okapiUrl: http://localhost:9130
+  - tenant: onChange-test-2
+    okapiUrl: http://localhost:9131
+`
+	if err := os.WriteFile(tenantFile, []byte(updatedYAML), 0644); err != nil {
+		t.Fatalf("Failed to write updated tenant file: %v", err)
+	}
+
+	// Trigger reload — the diff should fire onChange
+	if err := reloader.TriggerReload(); err != nil {
+		t.Fatalf("Second TriggerReload() failed: %v", err)
+	}
+
+	// Poll up to 500ms in case the callback is asynchronous
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if callCount.Load() > beforeCount {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if callCount.Load() <= beforeCount {
+		t.Error("Expected onChange callback to fire after tenant file was updated")
+	}
+
+	tenantCount := len(reloader.GetCurrentConfig().GetTenants())
+	if tenantCount < 2 {
+		t.Errorf("Expected at least 2 tenants after update, got %d", tenantCount)
+	}
+}
+
+func TestReloader_AllLoadersFail_PreservesLastKnownGood(t *testing.T) {
+	initialYAML := `
+tenants:
+  - tenant: preserve-test
+    okapiUrl: http://localhost:9130
+`
+	reloader, tenantFile := createTestReloader(t, initialYAML, nil)
+
+	// Start and stop to initialize loaders
+	ctx := context.Background()
+	if err := reloader.Start(ctx); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	reloader.Stop()
+
+	// First reload — loads the tenant successfully
+	if err := reloader.TriggerReload(); err != nil {
+		t.Fatalf("First TriggerReload() failed: %v", err)
+	}
+	if _, ok := reloader.GetCurrentConfig().Tenants["preserve-test"]; !ok {
+		t.Fatal("Expected 'preserve-test' tenant after first reload")
+	}
+
+	// Delete the tenant file so all loaders will fail on next reload
+	if err := os.Remove(tenantFile); err != nil {
+		t.Fatalf("Failed to remove tenant file: %v", err)
+	}
+
+	// Second reload — loader should fail; last-known-good must be preserved
+	_ = reloader.TriggerReload()
+
+	cfg := reloader.GetCurrentConfig()
+	if _, ok := cfg.Tenants["preserve-test"]; !ok {
+		t.Error("Expected last-known-good tenant 'preserve-test' to be preserved after loader failure")
+	}
+}
+
+func TestReloader_ConcurrentAccess_NoRace(t *testing.T) {
+	reloader, _ := createTestReloader(t, reloaderTenantYAML, nil)
+
+	ctx := context.Background()
+	if err := reloader.Start(ctx); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	defer reloader.Stop()
+
+	var wg sync.WaitGroup
+
+	// 5 goroutines reading config concurrently
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				_ = reloader.GetCurrentConfig().GetTenants()
+			}
+		}()
+	}
+
+	// 2 goroutines triggering reloads concurrently
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				_ = reloader.TriggerReload()
+			}
+		}()
+	}
+
+	wg.Wait()
 }

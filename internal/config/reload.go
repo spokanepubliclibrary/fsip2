@@ -7,11 +7,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // Reloader handles periodic reloading of configuration
 type Reloader struct {
 	config    *Config
+	logger    *zap.Logger
 	loaders   []TenantConfigLoader
 	interval  time.Duration
 	onChange  func(*Config)
@@ -22,9 +25,10 @@ type Reloader struct {
 }
 
 // NewReloader creates a new configuration reloader
-func NewReloader(cfg *Config, onChange func(*Config)) *Reloader {
+func NewReloader(cfg *Config, logger *zap.Logger, onChange func(*Config)) *Reloader {
 	return &Reloader{
 		config:    cfg,
+		logger:    logger,
 		interval:  cfg.GetScanPeriod(),
 		onChange:  onChange,
 		stopCh:    make(chan struct{}),
@@ -123,8 +127,7 @@ func (r *Reloader) reloadLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := r.reload(); err != nil {
-				// Log error but continue (don't stop reloader on error)
-				// In a real implementation, this would use the logger
+				r.logger.Warn("Config reload failed", zap.Error(err))
 				continue
 			}
 		}
@@ -144,7 +147,7 @@ func (r *Reloader) reload() error {
 	for _, loader := range r.loaders {
 		tenantCfgs, scTenants, err := loader.Load()
 		if err != nil {
-			// Log warning but continue with other sources
+			r.logger.Warn("Config loader failed", zap.Error(err))
 			continue
 		}
 
@@ -156,12 +159,15 @@ func (r *Reloader) reload() error {
 		newSCTenants = append(newSCTenants, scTenants...)
 	}
 
+	// Preserve last-known-good if every loader failed (newTenants is empty but current config has tenants).
+	if len(newTenants) == 0 && len(r.config.GetTenants()) > 0 {
+		r.logger.Error("All config sources failed to load; preserving last-known-good config")
+		return fmt.Errorf("all config sources failed to load")
+	}
+
 	// Check if configuration has changed
 	if r.hasChanged(newTenants) {
-		// Update configuration
-		r.config.Tenants = newTenants
-		r.config.SCTenants = newSCTenants
-		r.config.TenantsOrdered = newTenantsOrdered
+		r.config.SetTenants(newTenants, newSCTenants, newTenantsOrdered)
 
 		// Call onChange callback if provided
 		if r.onChange != nil {
@@ -472,7 +478,7 @@ func escapeDelimiter(s string) string {
 // hasChanged checks if the tenant configuration has changed
 func (r *Reloader) hasChanged(newTenants map[string]*TenantConfig) bool {
 	// Find all configuration changes
-	changes := findConfigChanges(r.config.Tenants, newTenants)
+	changes := findConfigChanges(r.config.GetTenants(), newTenants)
 
 	// Log changes if any were found
 	if len(changes) > 0 {
