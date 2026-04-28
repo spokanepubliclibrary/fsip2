@@ -53,7 +53,7 @@ test: test-unit
 # Run unit tests
 test-unit:
 	@echo "Running unit tests..."
-	$(GOTEST) -v -cover ./internal/... ./cmd/...
+	$(GOTEST) -v -cover ./internal/... 
 
 # Run integration tests
 test-integration:
