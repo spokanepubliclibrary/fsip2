@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -488,10 +489,10 @@ func TestServerConcurrentConnections(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			// Simulate connection handling
-			server.activeConnections++
-			server.totalConnections++
+			atomic.AddInt64(&server.activeConnections, 1)
+			atomic.AddInt64(&server.totalConnections, 1)
 			time.Sleep(10 * time.Millisecond)
-			server.activeConnections--
+			atomic.AddInt64(&server.activeConnections, -1)
 		}(i)
 	}
 

@@ -57,6 +57,15 @@ func NewService(cfg *config.Config) *Service {
 		s.defaultConfig = cfg.GetTenantsOrdered()[0]
 	}
 
+	// Priority 4: last-resort fallback — any tenant from the map (handles configs
+	// built without TenantsOrdered, e.g. in tests or minimal programmatic configs)
+	if s.defaultConfig == nil {
+		for _, tenantCfg := range cfg.GetTenants() {
+			s.defaultConfig = tenantCfg
+			break
+		}
+	}
+
 	// Initialize default resolvers
 	s.initializeResolvers(cfg)
 
@@ -101,6 +110,15 @@ func (s *Service) Reinitialize(cfg *config.Config) {
 	// Priority 3: absolute fallback — first declared tenant
 	if s.defaultConfig == nil && len(cfg.GetTenantsOrdered()) > 0 {
 		s.defaultConfig = cfg.GetTenantsOrdered()[0]
+	}
+
+	// Priority 4: last-resort fallback — any tenant from the map (handles configs
+	// built without TenantsOrdered, e.g. in tests or minimal programmatic configs)
+	if s.defaultConfig == nil {
+		for _, tenantCfg := range cfg.GetTenants() {
+			s.defaultConfig = tenantCfg
+			break
+		}
 	}
 
 	s.initializeResolvers(cfg)
