@@ -13,7 +13,8 @@ healthCheckPort: 8081
 # Maximum number of cached authentication tokens
 tokenCacheCapacity: 100
 
-# Configuration reload scan period (milliseconds)
+# How often (in milliseconds) to poll for tenant config changes. Default: 300000 (5 minutes).
+# Set to 0 to use the default. Minimum effective value: 1000ms.
 scanPeriod: 300000
 
 # Application log level (debug, info, warn, error)

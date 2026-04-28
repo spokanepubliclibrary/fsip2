@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -28,6 +29,34 @@ type Config struct {
 
 	// Top-level SC tenant configurations (loaded from sources)
 	SCTenants []SCTenantConfig `yaml:"-"`
+
+	mu sync.RWMutex
+}
+
+func (c *Config) GetTenants() map[string]*TenantConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Tenants
+}
+
+func (c *Config) GetSCTenants() []SCTenantConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.SCTenants
+}
+
+func (c *Config) GetTenantsOrdered() []*TenantConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.TenantsOrdered
+}
+
+func (c *Config) SetTenants(tenants map[string]*TenantConfig, scTenants []SCTenantConfig, ordered []*TenantConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Tenants = tenants
+	c.SCTenants = scTenants
+	c.TenantsOrdered = ordered
 }
 
 // ConfigSource represents a source for tenant configuration
