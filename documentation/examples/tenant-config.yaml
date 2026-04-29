@@ -6,10 +6,23 @@
 # Multi-tenant SC routing (optional, top-level)
 # Each entry maps connection-property rules to a tenant. First match wins.
 scTenants:
-  # Tenants with rules are matched first (port, subnet, locationCodes, usernamePrefixes).
-  # A scTenant entry with NO rules acts as the explicit catch-all default.
-  # It should be declared last, though order does not affect matching — only
-  # the absence of rules determines catch-all status.
+  # scTenants are evaluated in declaration order.
+  # The first entry where ALL rules present match wins — stop processing.
+  # Rules: port, subnet, usernamePrefixes, locationCodes. Absent rules are wildcards.
+  #
+  # ORDERING RULE: more-specific entries (multiple rules) must come BEFORE
+  # less-specific entries (fewer rules). A port+prefix entry must precede a
+  # port-only entry on the same port, or the port-only entry will match first.
+  #
+  # Example (correct order):
+  #   - tenant: snapshot          # port AND prefix — more specific, declared first
+  #     port: 6444
+  #     usernamePrefixes: ["diku_"]
+  #   - tenant: institution-test  # port only — less specific, declared after
+  #     port: 6444
+  #   - tenant: user-auth         # prefix only — no port rule
+  #     usernamePrefixes: ["bob-"]
+  #   - tenant: default           # no rules — catch-all, always last
   - tenant: snapshot
     port: 6444
 

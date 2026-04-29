@@ -29,6 +29,8 @@ type Connection struct {
 	tenantService *tenant.Service
 	handlers      map[parser.MessageCode]MessageHandler
 	server        *Server
+	serverPort    int
+	clientIP      string
 }
 
 // MessageHandler is an interface for handling SIP2 messages
@@ -43,6 +45,8 @@ func NewConnection(
 	tenantService *tenant.Service,
 	handlers map[parser.MessageCode]MessageHandler,
 	server *Server,
+	serverPort int,
+	clientIP string,
 ) *Connection {
 	return &Connection{
 		conn:          conn,
@@ -52,6 +56,8 @@ func NewConnection(
 		tenantService: tenantService,
 		handlers:      handlers,
 		server:        server,
+		serverPort:    serverPort,
+		clientIP:      clientIP,
 	}
 }
 
@@ -281,11 +287,12 @@ func (c *Connection) handleLoginTenantResolution(ctx context.Context, msg *parse
 	locationCode := msg.GetField(parser.LocationCode)
 
 	// Attempt LOGIN phase resolution
-	newTenant, err := c.tenantService.ResolveAtLogin(
+	newTenant, err := c.tenantService.ResolveComplete(
 		ctx,
+		c.serverPort,
+		c.clientIP,
 		username,
 		locationCode,
-		c.session.TenantConfig,
 	)
 	if err != nil {
 		return err

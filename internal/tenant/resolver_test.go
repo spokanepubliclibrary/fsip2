@@ -191,162 +191,6 @@ func TestResolveAtConnectWithPortResolver(t *testing.T) {
 	}
 }
 
-// TestResolveAtLoginWithLocationCode tests location code resolution using top-level SCTenants.
-func TestResolveAtLoginWithLocationCode(t *testing.T) {
-	defaultConfig := &config.TenantConfig{
-		Tenant:      "default",
-		OkapiURL:    "https://default.example.com",
-		OkapiTenant: "default",
-	}
-
-	tenant3Cfg := &config.TenantConfig{
-		Tenant:      "tenant3",
-		OkapiURL:    "https://tenant3.example.com",
-		OkapiTenant: "tenant3",
-	}
-	cfg := &config.Config{
-		Tenants: map[string]*config.TenantConfig{
-			"default": defaultConfig,
-			"tenant3": tenant3Cfg,
-		},
-		TenantsOrdered: []*config.TenantConfig{defaultConfig, tenant3Cfg},
-		SCTenants: []config.SCTenantConfig{
-			{
-				Tenant:        "tenant3",
-				LocationCodes: []string{"MAIN", "BRANCH1"},
-			},
-		},
-	}
-
-	svc := NewService(cfg)
-
-	// Matching location code.
-	result, err := svc.ResolveAtLogin(context.Background(), "user1", "MAIN", defaultConfig)
-	if err != nil {
-		t.Fatalf("ResolveAtLogin() error = %v", err)
-	}
-	if result.Tenant != "tenant3" {
-		t.Errorf("Expected tenant3 for location MAIN, got '%s'", result.Tenant)
-	}
-
-	// Non-matching location code falls back to default.
-	result, err = svc.ResolveAtLogin(context.Background(), "user1", "UNKNOWN", defaultConfig)
-	if err != nil {
-		t.Fatalf("ResolveAtLogin() error = %v", err)
-	}
-	if result.Tenant != "default" {
-		t.Errorf("Expected default for unknown location, got '%s'", result.Tenant)
-	}
-}
-
-// TestResolveAtLoginWithUsernamePrefix tests username prefix resolution using top-level SCTenants.
-// Verifies the resolver returns the correct looked-up TenantConfig (correct OkapiURL/OkapiTenant).
-func TestResolveAtLoginWithUsernamePrefix(t *testing.T) {
-	defaultConfig := &config.TenantConfig{
-		Tenant:      "default",
-		OkapiURL:    "https://default.example.com",
-		OkapiTenant: "default",
-	}
-
-	tenant4Cfg := &config.TenantConfig{
-		Tenant:      "tenant4",
-		OkapiURL:    "https://tenant4.example.com",
-		OkapiTenant: "tenant4",
-	}
-	cfg := &config.Config{
-		Tenants: map[string]*config.TenantConfig{
-			"default": defaultConfig,
-			"tenant4": tenant4Cfg,
-		},
-		TenantsOrdered: []*config.TenantConfig{defaultConfig, tenant4Cfg},
-		SCTenants: []config.SCTenantConfig{
-			{
-				Tenant:           "tenant4",
-				UsernamePrefixes: []string{"lib4_", "test4_"},
-			},
-		},
-	}
-
-	svc := NewService(cfg)
-
-	// Matching prefix resolves to the correct TenantConfig — not the parent's.
-	result, err := svc.ResolveAtLogin(context.Background(), "lib4_john", "", defaultConfig)
-	if err != nil {
-		t.Fatalf("ResolveAtLogin() error = %v", err)
-	}
-	if result.Tenant != "tenant4" {
-		t.Errorf("Expected tenant4 for username lib4_john, got '%s'", result.Tenant)
-	}
-	if result.OkapiURL != "https://tenant4.example.com" {
-		t.Errorf("Expected OkapiURL 'https://tenant4.example.com', got '%s'", result.OkapiURL)
-	}
-	if result.OkapiTenant != "tenant4" {
-		t.Errorf("Expected OkapiTenant 'tenant4', got '%s'", result.OkapiTenant)
-	}
-
-	// Non-matching username falls back to default.
-	result, err = svc.ResolveAtLogin(context.Background(), "john", "", defaultConfig)
-	if err != nil {
-		t.Fatalf("ResolveAtLogin() error = %v", err)
-	}
-	if result.Tenant != "default" {
-		t.Errorf("Expected default for username john, got '%s'", result.Tenant)
-	}
-}
-
-// TestResolveAtLoginWithFullUsernamePrefix tests that a full username used as a usernamePrefixes
-// value (e.g. "main_sip1") matches exactly via strings.HasPrefix semantics.
-func TestResolveAtLoginWithFullUsernamePrefix(t *testing.T) {
-	defaultConfig := &config.TenantConfig{
-		Tenant:      "default",
-		OkapiURL:    "https://default.example.com",
-		OkapiTenant: "default",
-	}
-
-	mainCfg := &config.TenantConfig{
-		Tenant:      "main",
-		OkapiURL:    "https://main.example.com",
-		OkapiTenant: "main",
-	}
-	cfg := &config.Config{
-		Tenants: map[string]*config.TenantConfig{
-			"default": defaultConfig,
-			"main":    mainCfg,
-		},
-		TenantsOrdered: []*config.TenantConfig{defaultConfig, mainCfg},
-		SCTenants: []config.SCTenantConfig{
-			{
-				Tenant:           "main",
-				UsernamePrefixes: []string{"main_sip1"},
-			},
-		},
-	}
-
-	svc := NewService(cfg)
-
-	// Exact full username "main_sip1" matches via HasPrefix.
-	result, err := svc.ResolveAtLogin(context.Background(), "main_sip1", "", defaultConfig)
-	if err != nil {
-		t.Fatalf("ResolveAtLogin() error = %v", err)
-	}
-	if result.Tenant != "main" {
-		t.Errorf("Expected 'main' for username main_sip1, got '%s'", result.Tenant)
-	}
-	if result.OkapiURL != "https://main.example.com" {
-		t.Errorf("Expected OkapiURL 'https://main.example.com', got '%s'", result.OkapiURL)
-	}
-
-	// A username that merely contains the prefix as a substring but doesn't start with it
-	// should not match (e.g. "other_main_sip1").
-	result, err = svc.ResolveAtLogin(context.Background(), "other_main_sip1", "", defaultConfig)
-	if err != nil {
-		t.Fatalf("ResolveAtLogin() error = %v", err)
-	}
-	if result.Tenant != "default" {
-		t.Errorf("Expected default for username other_main_sip1, got '%s'", result.Tenant)
-	}
-}
-
 // TestSCTenantUnknownTenantSkipped verifies that an SCTenant referencing a name not present
 // in cfg.Tenants is skipped gracefully — no panic, and no resolver is registered.
 func TestSCTenantUnknownTenantSkipped(t *testing.T) {
@@ -639,6 +483,198 @@ func TestNewServiceCatchAllSCTenant(t *testing.T) {
 	}
 	if defaultTenant.Tenant == "institution-test" {
 		t.Error("Default tenant must not be 'institution-test'")
+	}
+}
+
+// TestResolveComplete tests the holistic login-time tenant resolution that walks
+// scTenants in declaration order and applies all present rules as conjunctive filters.
+func TestResolveComplete(t *testing.T) {
+	// Shared tenant configs used across cases.
+	snapshotCfg := &config.TenantConfig{
+		Tenant:   "snapshot",
+		OkapiURL: "https://snapshot.example.com",
+	}
+	institutionCfg := &config.TenantConfig{
+		Tenant:   "institution-test",
+		OkapiURL: "https://institution.example.com",
+	}
+	userAuthCfg := &config.TenantConfig{
+		Tenant:   "user-auth",
+		OkapiURL: "https://user-auth.example.com",
+	}
+	defaultCfg := &config.TenantConfig{
+		Tenant:   "default",
+		OkapiURL: "https://default.example.com",
+	}
+
+	// buildStandardCfg builds the four-tenant config with snapshot declared first.
+	buildStandardCfg := func() *config.Config {
+		return &config.Config{
+			Tenants: map[string]*config.TenantConfig{
+				"snapshot":         snapshotCfg,
+				"institution-test": institutionCfg,
+				"user-auth":        userAuthCfg,
+				"default":          defaultCfg,
+			},
+			TenantsOrdered: []*config.TenantConfig{snapshotCfg, institutionCfg, userAuthCfg, defaultCfg},
+			SCTenants: []config.SCTenantConfig{
+				// compound: port=6444 AND prefix=diku_
+				{Tenant: "snapshot", Port: 6444, UsernamePrefixes: []string{"diku_"}},
+				// port-only
+				{Tenant: "institution-test", Port: 6444},
+				// prefix-only
+				{Tenant: "user-auth", UsernamePrefixes: []string{"bob-bob"}},
+				// catch-all: no rules
+				{Tenant: "default"},
+			},
+		}
+	}
+
+	tests := []struct {
+		name         string
+		cfg          *config.Config
+		serverPort   int
+		clientIP     string
+		username     string
+		locationCode string
+		wantTenant   string
+	}{
+		{
+			name:       "PortAndPrefixCompound_PrefixMatches",
+			cfg:        buildStandardCfg(),
+			serverPort: 6444,
+			clientIP:   "127.0.0.1",
+			username:   "diku_admin",
+			wantTenant: "snapshot",
+		},
+		{
+			name:       "PortOnly_SkipsCompound",
+			cfg:        buildStandardCfg(),
+			serverPort: 6444,
+			clientIP:   "127.0.0.1",
+			username:   "bob-bob",
+			wantTenant: "institution-test",
+		},
+		{
+			name:       "PrefixOnly_NoPortMatch",
+			cfg:        buildStandardCfg(),
+			serverPort: 6443,
+			clientIP:   "127.0.0.1",
+			username:   "bob-bob",
+			wantTenant: "user-auth",
+		},
+		{
+			name:       "CatchAll_NothingMatches",
+			cfg:        buildStandardCfg(),
+			serverPort: 6443,
+			clientIP:   "127.0.0.1",
+			username:   "unknown-user",
+			wantTenant: "default",
+		},
+		{
+			// institution-test (port=6444, no prefix) is declared BEFORE
+			// snapshot (port=6444, prefix=diku_).  institution-test has no prefix
+			// rule so it is a wildcard on username — it matches diku_admin first.
+			name: "DeclarationOrderMatters",
+			cfg: &config.Config{
+				Tenants: map[string]*config.TenantConfig{
+					"snapshot":         snapshotCfg,
+					"institution-test": institutionCfg,
+					"user-auth":        userAuthCfg,
+					"default":          defaultCfg,
+				},
+				TenantsOrdered: []*config.TenantConfig{institutionCfg, snapshotCfg, userAuthCfg, defaultCfg},
+				SCTenants: []config.SCTenantConfig{
+					// port-only declared first — wins for any username on 6444
+					{Tenant: "institution-test", Port: 6444},
+					// compound declared second — never reached for diku_admin on 6444
+					{Tenant: "snapshot", Port: 6444, UsernamePrefixes: []string{"diku_"}},
+					{Tenant: "user-auth", UsernamePrefixes: []string{"bob-bob"}},
+					{Tenant: "default"},
+				},
+			},
+			serverPort: 6444,
+			clientIP:   "127.0.0.1",
+			username:   "diku_admin",
+			wantTenant: "institution-test",
+		},
+		{
+			// SubnetGateRejects: first scTenant has SCSubnet=10.0.0.0/24; clientIP
+			// 192.168.1.1 is outside that subnet, so it is skipped. The second
+			// scTenant has no subnet rule and matches as a catch-all.
+			name: "SubnetGateRejects",
+			cfg: &config.Config{
+				Tenants: map[string]*config.TenantConfig{
+					"subnet-tenant":   snapshotCfg,
+					"fallback-tenant": defaultCfg,
+				},
+				TenantsOrdered: []*config.TenantConfig{snapshotCfg, defaultCfg},
+				SCTenants: []config.SCTenantConfig{
+					{Tenant: "subnet-tenant", SCSubnet: "10.0.0.0/24"},
+					{Tenant: "fallback-tenant"},
+				},
+			},
+			serverPort: 6443,
+			clientIP:   "192.168.1.1",
+			username:   "any-user",
+			wantTenant: "default",
+		},
+		{
+			// LocationCodeGateRejects: first scTenant requires locationCode "BRANCH2";
+			// we pass "MAIN" which is not in that list, so it is skipped. The second
+			// scTenant has no location rule and wins.
+			name: "LocationCodeGateRejects",
+			cfg: &config.Config{
+				Tenants: map[string]*config.TenantConfig{
+					"branch2-tenant":  institutionCfg,
+					"fallback-tenant": defaultCfg,
+				},
+				TenantsOrdered: []*config.TenantConfig{institutionCfg, defaultCfg},
+				SCTenants: []config.SCTenantConfig{
+					{Tenant: "branch2-tenant", LocationCodes: []string{"BRANCH2"}},
+					{Tenant: "fallback-tenant"},
+				},
+			},
+			serverPort:   6443,
+			clientIP:     "127.0.0.1",
+			username:     "any-user",
+			locationCode: "MAIN",
+			wantTenant:   "default",
+		},
+		{
+			// UnknownTenantNameSkipped: first scTenant references "ghost" which is not
+			// present in the Tenants map. It is silently skipped and the next valid
+			// entry (fallback-tenant) wins.
+			name: "UnknownTenantNameSkipped",
+			cfg: &config.Config{
+				Tenants: map[string]*config.TenantConfig{
+					"fallback-tenant": defaultCfg,
+				},
+				TenantsOrdered: []*config.TenantConfig{defaultCfg},
+				SCTenants: []config.SCTenantConfig{
+					{Tenant: "ghost"},
+					{Tenant: "fallback-tenant"},
+				},
+			},
+			serverPort: 6443,
+			clientIP:   "127.0.0.1",
+			username:   "any-user",
+			wantTenant: "default",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewService(tt.cfg)
+			got, err := svc.ResolveComplete(context.Background(), tt.serverPort, tt.clientIP, tt.username, tt.locationCode)
+			if err != nil {
+				t.Fatalf("ResolveComplete() error = %v", err)
+			}
+			if got.Tenant != tt.wantTenant {
+				t.Errorf("ResolveComplete() tenant = %q, want %q", got.Tenant, tt.wantTenant)
+			}
+		})
 	}
 }
 

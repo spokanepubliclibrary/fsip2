@@ -293,6 +293,8 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) error {
 		s.tenantService,
 		s.handlers,
 		s,
+		serverPort,
+		clientIP,
 	)
 
 	// Handle the connection

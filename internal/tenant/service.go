@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
+	"github.com/seancfoley/ipaddress-go/ipaddr"
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 )
 
@@ -16,6 +18,7 @@ type Service struct {
 	loginResolvers   []Resolver
 	defaultConfig    *config.TenantConfig
 	tenantConfigs    map[string]*config.TenantConfig
+	scTenants        []config.SCTenantConfig
 }
 
 // NewService creates a new tenant resolution service
@@ -25,6 +28,7 @@ func NewService(cfg *config.Config) *Service {
 		loginResolvers:   []Resolver{},
 		defaultConfig:    nil,
 		tenantConfigs:    cfg.GetTenants(),
+		scTenants:        cfg.GetSCTenants(),
 	}
 
 	// Priority 1: explicit catch-all — scTenant with no routing rules
@@ -81,6 +85,7 @@ func (s *Service) Reinitialize(cfg *config.Config) {
 	s.loginResolvers = []Resolver{}
 	s.defaultConfig = nil
 	s.tenantConfigs = cfg.GetTenants()
+	s.scTenants = cfg.GetSCTenants()
 
 	// Priority 1: explicit catch-all — scTenant with no routing rules
 	for _, scTenant := range cfg.GetSCTenants() {
@@ -203,36 +208,91 @@ func (s *Service) ResolveAtConnect(ctx context.Context, clientIP string, clientP
 	return s.defaultConfig, nil
 }
 
-// ResolveAtLogin resolves tenant at LOGIN time using login message fields
-func (s *Service) ResolveAtLogin(ctx context.Context, username, locationCode string, currentTenant *config.TenantConfig) (*config.TenantConfig, error) {
+// ipInSubnet reports whether clientIP falls within the given subnet string (CIDR or plain IP).
+// It mirrors the logic in IPResolver.Resolve, using the ipaddress-go library.
+func ipInSubnet(clientIP, subnet string) bool {
+	ipSubnet := ipaddr.NewIPAddressString(subnet)
+	if ipSubnet.GetAddress() == nil {
+		return false
+	}
+	clientIPAddr := ipaddr.NewIPAddressString(clientIP)
+	if clientIPAddr.GetAddress() == nil {
+		return false
+	}
+	return ipSubnet.Contains(clientIPAddr)
+}
+
+// hasAnyPrefix reports whether s starts with any of the given prefixes.
+// It mirrors the matching logic in UsernamePrefixResolver.Resolve.
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsStr reports whether target is present in the slice.
+// It mirrors the matching logic in LocationCodeResolver.Resolve.
+func containsStr(slice []string, target string) bool {
+	for _, v := range slice {
+		if v == target {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolveComplete performs a single holistic tenant resolution at login time.
+// It walks s.scTenants in declaration order and returns the first entry where
+// every rule that is present matches. Rules absent from an entry are treated as
+// "don't care" (wildcard). If no entry matches, s.defaultConfig is returned.
+func (s *Service) ResolveComplete(
+	ctx context.Context,
+	serverPort int,
+	clientIP string,
+	username string,
+	locationCode string,
+) (*config.TenantConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	data := &ResolverData{
-		Username:      username,
-		LocationCode:  locationCode,
-		CurrentTenant: currentTenant,
-	}
-
-	// Try each LOGIN phase resolver in priority order
-	for _, resolver := range s.loginResolvers {
-		tenantCfg, err := resolver.Resolve(ctx, data)
-		if err != nil {
-			// Log error but continue to next resolver
+	for _, sc := range s.scTenants {
+		// Port rule
+		if sc.Port > 0 && sc.Port != serverPort {
 			continue
 		}
 
-		if tenantCfg != nil {
-			return tenantCfg, nil
+		// Subnet rule
+		if sc.SCSubnet != "" && !ipInSubnet(clientIP, sc.SCSubnet) {
+			continue
 		}
+
+		// Username prefix rule
+		if len(sc.UsernamePrefixes) > 0 && !hasAnyPrefix(username, sc.UsernamePrefixes) {
+			continue
+		}
+
+		// Location code rule
+		if len(sc.LocationCodes) > 0 && !containsStr(sc.LocationCodes, locationCode) {
+			continue
+		}
+
+		// All present rules matched — look up the full TenantConfig
+		tenantCfg, ok := s.tenantConfigs[sc.Tenant]
+		if !ok {
+			// Misconfigured entry: tenant name not in the tenant map — skip
+			continue
+		}
+		return tenantCfg, nil
 	}
 
-	// No resolver matched, return current tenant
-	if currentTenant == nil {
-		return s.defaultConfig, nil
+	// Nothing matched
+	if s.defaultConfig == nil {
+		return nil, fmt.Errorf("no tenant configuration available")
 	}
-
-	return currentTenant, nil
+	return s.defaultConfig, nil
 }
 
 // GetDefaultTenant returns the default tenant configuration
