@@ -121,6 +121,8 @@ func TestReadMessageSingleByteDelimiter(t *testing.T) {
 				tenantService,
 				make(map[parser.MessageCode]MessageHandler),
 				server,
+				6443,
+				"127.0.0.1",
 			)
 
 			reader := bufio.NewReader(mockConn.readBuf)
@@ -185,6 +187,8 @@ func TestReadMessageMultiByteDelimiter(t *testing.T) {
 				tenantService,
 				make(map[parser.MessageCode]MessageHandler),
 				server,
+				6443,
+				"127.0.0.1",
 			)
 
 			reader := bufio.NewReader(mockConn.readBuf)
@@ -240,6 +244,8 @@ func TestSendMessage(t *testing.T) {
 				tenantService,
 				make(map[parser.MessageCode]MessageHandler),
 				server,
+				6443,
+				"127.0.0.1",
 			)
 
 			err := conn.sendMessage(tt.message)
@@ -275,6 +281,8 @@ func TestConnectionClose(t *testing.T) {
 		tenantService,
 		make(map[parser.MessageCode]MessageHandler),
 		server,
+		6443,
+		"127.0.0.1",
 	)
 
 	if mockConn.closed {
@@ -311,6 +319,8 @@ func TestGetRemoteAddr(t *testing.T) {
 		tenantService,
 		make(map[parser.MessageCode]MessageHandler),
 		server,
+		6443,
+		"127.0.0.1",
 	)
 
 	addr := conn.GetRemoteAddr()
@@ -339,6 +349,8 @@ func TestGetLocalAddr(t *testing.T) {
 		tenantService,
 		make(map[parser.MessageCode]MessageHandler),
 		server,
+		6443,
+		"127.0.0.1",
 	)
 
 	addr := conn.GetLocalAddr()
@@ -367,6 +379,8 @@ func TestGetClientIP(t *testing.T) {
 		tenantService,
 		make(map[parser.MessageCode]MessageHandler),
 		server,
+		6443,
+		"127.0.0.1",
 	)
 
 	ip, err := conn.GetClientIP()
@@ -399,6 +413,8 @@ func TestGetClientPort(t *testing.T) {
 		tenantService,
 		make(map[parser.MessageCode]MessageHandler),
 		server,
+		6443,
+		"127.0.0.1",
 	)
 
 	port, err := conn.GetClientPort()
@@ -431,6 +447,8 @@ func TestGetServerPort(t *testing.T) {
 		tenantService,
 		make(map[parser.MessageCode]MessageHandler),
 		server,
+		6443,
+		"127.0.0.1",
 	)
 
 	port, err := conn.GetServerPort()
@@ -472,6 +490,8 @@ func TestProcessMessageWithHandler(t *testing.T) {
 		tenantService,
 		handlers,
 		server,
+		6443,
+		"127.0.0.1",
 	)
 
 	// SC Status request message
@@ -522,6 +542,8 @@ func TestProcessMessageNoHandler(t *testing.T) {
 		tenantService,
 		handlers,
 		server,
+		6443,
+		"127.0.0.1",
 	)
 
 	// SC Status request message
@@ -558,6 +580,8 @@ func TestProcessMessageInvalidMessage(t *testing.T) {
 		tenantService,
 		make(map[parser.MessageCode]MessageHandler),
 		server,
+		6443,
+		"127.0.0.1",
 	)
 
 	// Invalid message (too short)
@@ -598,6 +622,8 @@ func TestConnectionSessionActivityUpdate(t *testing.T) {
 		tenantService,
 		handlers,
 		server,
+		6443,
+		"127.0.0.1",
 	)
 
 	// Wait a bit to establish some idle time
@@ -642,7 +668,7 @@ func newHandleTestConn(t *testing.T, data string, handlers map[parser.MessageCod
 	cfg := &config.Config{Tenants: map[string]*config.TenantConfig{tc.Tenant: tc}}
 	srv, _ := NewServer(cfg, logger)
 	ts := tenant.NewService(cfg)
-	return NewConnection(mc, sess, ts, handlers, srv), mc
+	return NewConnection(mc, sess, ts, handlers, srv, 6443, "127.0.0.1"), mc
 }
 
 // TestConnectionHandle_EOF — empty connection closes cleanly (nil error).
@@ -682,7 +708,7 @@ func TestConnectionHandle_ContextCancelled(t *testing.T) {
 	cfg := &config.Config{}
 	srv, _ := NewServer(cfg, logger)
 	ts := tenant.NewService(cfg)
-	conn := NewConnection(serverConn, sess, ts, nil, srv)
+	conn := NewConnection(serverConn, sess, ts, nil, srv, 6443, "127.0.0.1")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -724,7 +750,7 @@ func newBareConnection(t *testing.T) *Connection {
 	cfg := &config.Config{}
 	srv, _ := NewServer(cfg, logger)
 	ts := tenant.NewService(cfg)
-	return NewConnection(mc, sess, ts, nil, srv)
+	return NewConnection(mc, sess, ts, nil, srv, 6443, "127.0.0.1")
 }
 
 func TestBuildErrorResponse_CheckoutMessage(t *testing.T) {
@@ -782,7 +808,7 @@ func TestHandleLoginTenantResolution_NoChange(t *testing.T) {
 	cfg := &config.Config{Tenants: map[string]*config.TenantConfig{tc.Tenant: tc}}
 	srv, _ := NewServer(cfg, logger)
 	ts := tenant.NewService(cfg)
-	conn := NewConnection(mc, sess, ts, nil, srv)
+	conn := NewConnection(mc, sess, ts, nil, srv, 6443, "127.0.0.1")
 
 	msg := &parser.Message{
 		Code: parser.LoginRequest,
@@ -825,7 +851,7 @@ func TestHandleLoginTenantResolution_TenantSwitch(t *testing.T) {
 	ts := tenant.NewService(cfg)
 	mc := newMockConn("")
 	sess := types.NewSession("test-session", defaultTc)
-	conn := NewConnection(mc, sess, ts, nil, srv)
+	conn := NewConnection(mc, sess, ts, nil, srv, 6443, "127.0.0.1")
 
 	msg := &parser.Message{
 		Code: parser.LoginRequest,
@@ -900,6 +926,8 @@ func TestReadMessageDelimiterDetection(t *testing.T) {
 				tenantService,
 				make(map[parser.MessageCode]MessageHandler),
 				server,
+				6443,
+				"127.0.0.1",
 			)
 
 			reader := bufio.NewReader(mockConn.readBuf)
@@ -942,7 +970,7 @@ func TestReadMessage_MaxSizeGuard(t *testing.T) {
 		cfg := &config.Config{OkapiURL: "https://folio.example.com"}
 		srv, _ := NewServer(cfg, logger)
 		ts := tenant.NewService(cfg)
-		return NewConnection(mc, sess, ts, make(map[parser.MessageCode]MessageHandler), srv)
+		return NewConnection(mc, sess, ts, make(map[parser.MessageCode]MessageHandler), srv, 6443, "127.0.0.1")
 	}
 
 	tests := []struct {
@@ -1043,7 +1071,7 @@ func TestHandleLoginTenantResolution_UsernamePrefix(t *testing.T) {
 	ts := tenant.NewService(cfg)
 	mc := newMockConn("")
 	sess := types.NewSession("test-session", defaultTc)
-	conn := NewConnection(mc, sess, ts, nil, srv)
+	conn := NewConnection(mc, sess, ts, nil, srv, 6443, "127.0.0.1")
 
 	// CN = LoginUserID set to a lib4-prefixed username.
 	// AA = PatronIdentifier is deliberately absent (or set to a non-matching value)
