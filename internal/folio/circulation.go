@@ -218,8 +218,11 @@ func (cc *CirculationClient) GetLoansByItem(ctx context.Context, token string, i
 
 // GetRequestsByItem retrieves requests for an item
 func (cc *CirculationClient) GetRequestsByItem(ctx context.Context, token string, itemID string) (*models.RequestCollection, error) {
-	query := fmt.Sprintf("itemId==%s", itemID)
-	path := fmt.Sprintf("/circulation/requests?query=%s", url.QueryEscape(query))
+	query := fmt.Sprintf(
+		`(itemId==%s) and (status==("Open - In transit" or "Open - Awaiting pickup")) sortby requestDate/sort.descending`,
+		itemID,
+	)
+	path := fmt.Sprintf("/circulation/requests?query=%s&limit=20", url.QueryEscape(query))
 
 	var requests models.RequestCollection
 	err := cc.client.Get(ctx, path, token, &requests)

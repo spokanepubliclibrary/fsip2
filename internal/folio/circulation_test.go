@@ -535,3 +535,39 @@ func TestCancelRequest_Success(t *testing.T) {
 		t.Fatalf("CancelRequest failed: %v", err)
 	}
 }
+
+func TestGetRequestsByItem_QueryFormat(t *testing.T) {
+	// Verifies GetRequestsByItem sends the correct CQL query:
+	// itemId filter, open-status filter (In transit + Awaiting pickup), sort descending, and limit.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		limit := r.URL.Query().Get("limit")
+
+		if !strings.Contains(query, "itemId==item-uuid-123") {
+			t.Errorf("must filter by itemId, got query: %s", query)
+		}
+		if !strings.Contains(query, "Open - In transit") {
+			t.Errorf("must include in-transit status, got query: %s", query)
+		}
+		if !strings.Contains(query, "Open - Awaiting pickup") {
+			t.Errorf("must include awaiting-pickup status, got query: %s", query)
+		}
+		if !strings.Contains(query, "sortby requestDate/sort.descending") {
+			t.Errorf("must sort newest first, got query: %s", query)
+		}
+		if limit == "" {
+			t.Error("must specify a limit")
+		}
+
+		collection := models.RequestCollection{Requests: []models.Request{}, TotalRecords: 0}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(collection)
+	}))
+	defer server.Close()
+
+	client := NewCirculationClient(server.URL, "test-tenant")
+	_, err := client.GetRequestsByItem(context.Background(), "test-token", "item-uuid-123")
+	if err != nil {
+		t.Fatalf("GetRequestsByItem failed: %v", err)
+	}
+}

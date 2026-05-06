@@ -344,6 +344,9 @@ func TestTruncateString(t *testing.T) {
 }
 
 // TestCalculateAlertType tests the alert type calculation logic
+// NOTE: As of the CV fix, callers pass (isAwaitingPickup || hasHoldOrRecall) as the
+// second argument. The "Awaiting pickup" item status path reaches the (false, true) → "01"
+// case here — test coverage for that path is in TestCheckinHandle_LocalHold_*.
 func TestCalculateAlertType(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -451,16 +454,63 @@ func TestCheckinHandler_Handle_MissingFields(t *testing.T) {
 	}
 }
 
-// TestCheckinHandler_FetchCheckinResponseData tests data fetching (unit test with mock data)
-func TestCheckinHandler_FetchCheckinResponseData(t *testing.T) {
-	// Note: This is a placeholder for future mock-based testing
-	// In a real scenario, you would:
-	// 1. Mock the FOLIO clients (inventory, circulation)
-	// 2. Set up expected API responses
-	// 3. Verify that the handler correctly processes the data
-	// 4. Test error handling for failed API calls
-
-	t.Skip("Integration test - requires FOLIO server or mocks")
+// TestCheckinResponseData_AlertType verifies that the CV field in the built response
+// reflects the alertType set in checkinResponseData.
+func TestCheckinResponseData_AlertType(t *testing.T) {
+	tests := []struct {
+		name         string
+		alertType    string
+		wantCV       string
+		wantContains bool
+	}{
+		{
+			name:         "Awaiting pickup - CV=01",
+			alertType:    "01",
+			wantCV:       "CV01",
+			wantContains: true,
+		},
+		{
+			name:         "In transit with hold - CV=02",
+			alertType:    "02",
+			wantCV:       "CV02",
+			wantContains: true,
+		},
+		{
+			name:         "In transit no hold - CV=04",
+			alertType:    "04",
+			wantCV:       "CV04",
+			wantContains: true,
+		},
+		{
+			name:         "Available no alert - CV absent",
+			alertType:    "",
+			wantCV:       "CV0", // CV| always appears as empty token; CV01/02/04 all start with CV0
+			wantContains: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := testutil.NewTenantConfig()
+			sess := testutil.NewAuthSession(tc)
+			h := NewCheckinHandler(zap.NewNop(), tc)
+			data := &checkinResponseData{
+				ok:            true,
+				institutionID: "TEST-INST",
+				itemBarcode:   "ITEM-001",
+				alertType:     tt.alertType,
+			}
+			response := h.buildCheckinResponseWithData(data, sess)
+			if tt.wantContains {
+				if !strings.Contains(response, tt.wantCV) {
+					t.Errorf("expected response to contain %q, got: %s", tt.wantCV, response)
+				}
+			} else {
+				if strings.Contains(response, tt.wantCV) {
+					t.Errorf("expected response NOT to contain %q, got: %s", tt.wantCV, response)
+				}
+			}
+		})
+	}
 }
 
 // TestCheckinResponseDataStructure tests the checkinResponseData structure
