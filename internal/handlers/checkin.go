@@ -345,7 +345,8 @@ func (h *CheckinHandler) fetchCheckinResponseData(ctx context.Context, token str
 
 	// Calculate alert type (CV field - Step 7)
 	inTransit := item.Status.Name == "In transit"
-	data.alertType = calculateAlertType(inTransit, hasHoldOrRecall)
+	isAwaitingPickup := item.Status.Name == "Awaiting pickup"
+	data.alertType = calculateAlertType(inTransit, isAwaitingPickup || hasHoldOrRecall)
 	if data.alertType != "" {
 		h.logger.Debug("Alert type calculated",
 			zap.String("alert_type", data.alertType),
@@ -433,12 +434,15 @@ func truncateString(s string, maxLen int) string {
 	return string(runes[:maxLen])
 }
 
-// calculateAlertType determines the alert type based on item status and requests
-// Alert Type Codes:
-// 01 = Hold exists but item not in transit
-// 02 = Item in transit AND (hold or recall exists)
-// 04 = Item in transit ONLY (no holds/recalls)
-// (empty) = No alert condition
+// calculateAlertType determines the alert type (CV field) for a checkin response.
+// Callers must pass (isAwaitingPickup || hasHoldOrRecall) as the second argument,
+// where isAwaitingPickup = item.Status.Name == "Awaiting pickup".
+//
+// CV codes:
+//   01 = Item on hold shelf, not in transit (item status "Awaiting pickup" OR open Hold/Recall found)
+//   02 = Item in transit AND a Hold or Recall request exists
+//   04 = Item in transit, no Hold or Recall (returning to home location)
+//   ""  = No alert condition
 func calculateAlertType(inTransit bool, hasHoldOrRecall bool) string {
 	if inTransit || hasHoldOrRecall {
 		if !inTransit {
