@@ -490,3 +490,176 @@ func minInt(a, b int) int {
 	}
 	return b
 }
+
+// makeDATestConfig builds a TenantConfig with message "17" / field "DA" configured
+// with the supplied preferredFirstName pointer (nil → field absent, defaults to true).
+func makeDATestConfig(preferredFirstName *bool) *config.TenantConfig {
+	return &config.TenantConfig{
+		Tenant:                   "test-tenant",
+		MessageDelimiter:         "\r",
+		FieldDelimiter:           "|",
+		Charset:                  "UTF-8",
+		CirculationStatusMapping: map[string]string{},
+		SupportedMessages: []config.MessageSupport{
+			{
+				Code:    "17",
+				Enabled: true,
+				Fields: []config.FieldConfiguration{
+					{
+						Code:               "DA",
+						Enabled:            true,
+						PreferredFirstName: preferredFirstName,
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestIsPreferredFirstNameEnabled_DA verifies that IsPreferredFirstNameEnabled
+// returns the correct value for message "17" / field "DA" under each config variant.
+func TestIsPreferredFirstNameEnabled_DA(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name               string
+		preferredFirstName *bool
+		want               bool
+	}{
+		{
+			name:               "nil (absent) defaults to false",
+			preferredFirstName: nil,
+			want:               false,
+		},
+		{
+			name:               "explicit true returns true",
+			preferredFirstName: boolPtr(true),
+			want:               true,
+		},
+		{
+			name:               "explicit false returns false",
+			preferredFirstName: boolPtr(false),
+			want:               false,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tc := makeDATestConfig(tt.preferredFirstName)
+			got := tc.IsPreferredFirstNameEnabled("17", "DA")
+			if got != tt.want {
+				t.Errorf("IsPreferredFirstNameEnabled(17, DA) = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFormatRequestorName_PreferredFirstName verifies formatRequestorName (one-arg form).
+// Preferred-name selection now happens at the Handle level via GetUserByID; this
+// function only formats whatever RequestRequester data is present.
+func TestFormatRequestorName_PreferredFirstName(t *testing.T) {
+	t.Parallel()
+
+	h := newItemHandler(nil)
+
+	tests := []struct {
+		name      string
+		requester *models.RequestRequester
+		want      string
+	}{
+		{
+			name:      "nil requester returns empty string",
+			requester: nil,
+			want:      "",
+		},
+		{
+			name:      "no LastName returns empty string",
+			requester: mockRequesterWithPreferredName("", "Jane", ""),
+			want:      "",
+		},
+		{
+			name:      "LastName and FirstName returns last-comma-first",
+			requester: mockRequesterWithPreferredName("Smith", "Jane", ""),
+			want:      "Smith, Jane",
+		},
+		{
+			name:      "LastName only returns LastName",
+			requester: mockRequesterWithPreferredName("Smith", "", ""),
+			want:      "Smith",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := h.formatRequestorName(tt.requester)
+			if got != tt.want {
+				t.Errorf("formatRequestorName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildItemInformationResponse_DA_NameInResponse verifies that when a
+// pre-computed requestorName is passed to buildItemInformationResponse the DA
+// field value appears in the serialised SIP2 response string.
+func TestBuildItemInformationResponse_DA_NameInResponse(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		requestorName string
+		wantInResp    string
+		wantAbsent    string
+	}{
+		{
+			name:          "preferred name appears in DA field",
+			requestorName: "Smith, Janie",
+			wantInResp:    "Smith, Janie",
+		},
+		{
+			name:          "regular first name appears in DA field",
+			requestorName: "Smith, Jane",
+			wantInResp:    "Smith, Jane",
+		},
+		{
+			name:          "empty requestorName produces no DA field",
+			requestorName: "",
+			wantAbsent:    "DASmith",
+		},
+	}
+
+	item := &models.Item{
+		ID:      "item-uuid",
+		Barcode: "ITEM001",
+		Status:  models.ItemStatus{Name: "Awaiting pickup"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tc := makeDATestConfig(boolPtr(true))
+			h := NewItemInformationHandler(zap.NewNop(), tc)
+			session := types.NewSession("da-resp-test", tc)
+
+			resp := h.buildItemInformationResponse(
+				session, item, "INST01", "ITEM001",
+				nil, nil, "", nil, "P-DA-001", tt.requestorName, true,
+			)
+
+			if tt.wantInResp != "" && !strings.Contains(resp, tt.wantInResp) {
+				t.Errorf("DA field: response does not contain %q\nfull response: %s",
+					tt.wantInResp, resp)
+			}
+			if tt.wantAbsent != "" && strings.Contains(resp, tt.wantAbsent) {
+				t.Errorf("DA field: response should not contain %q\nfull response: %s",
+					tt.wantAbsent, resp)
+			}
+		})
+	}
+}

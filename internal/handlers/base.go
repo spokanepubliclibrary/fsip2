@@ -412,17 +412,18 @@ func (h *BaseHandler) buildPatronStatusString(valid bool, user interface{}, manu
 }
 
 // formatPatronName formats a patron's name in "LastName, FirstName" format
-// Uses PreferredFirstName if available, otherwise FirstName, with fallback to username
+// Uses PreferredFirstName when usePreferred is true and the field is non-empty,
+// otherwise FirstName, with fallback to username.
 // This consolidates duplicated logic from patron_status and patron_information handlers
-func (h *BaseHandler) formatPatronName(user *models.User) string {
+func (h *BaseHandler) formatPatronName(user *models.User, usePreferred bool) string {
 	if user == nil {
 		return ""
 	}
 
-	// Determine first name: use PreferredFirstName if available, otherwise FirstName
-	firstName := user.Personal.PreferredFirstName
-	if firstName == "" {
-		firstName = user.Personal.FirstName
+	// Determine first name: use PreferredFirstName only when requested
+	firstName := user.Personal.FirstName
+	if usePreferred && user.Personal.PreferredFirstName != "" {
+		firstName = user.Personal.PreferredFirstName
 	}
 
 	// Build patron name
@@ -438,6 +439,18 @@ func (h *BaseHandler) formatPatronName(user *models.User) string {
 
 	// Fallback to username if no personal name
 	return user.Username
+}
+
+// formatRequestorName formats a requestor's name in "LastName, FirstName" format.
+// Uses RequestRequester.FirstName directly (preferred-name lookup is handled at the handler level).
+func (h *BaseHandler) formatRequestorName(requester *models.RequestRequester) string {
+	if requester == nil || requester.LastName == "" {
+		return ""
+	}
+	if requester.FirstName != "" {
+		return requester.LastName + ", " + requester.FirstName
+	}
+	return requester.LastName
 }
 
 // getPatronClient returns a PatronLookup for the session's tenant

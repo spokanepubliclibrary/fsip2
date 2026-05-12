@@ -248,7 +248,8 @@ func (h *PatronStatusHandler) buildPatronStatusResponse(
 	if valid && user != nil {
 		// Add patron name using helper (consolidates duplicated logic)
 		if u, ok := user.(*models.User); ok {
-			patronName := h.formatPatronName(u)
+			usePreferred := session.TenantConfig.IsPreferredFirstNameEnabled("23", "AE")
+			patronName := h.formatPatronName(u, usePreferred)
 			response += fmt.Sprintf("|AE%s", patronName)
 		}
 

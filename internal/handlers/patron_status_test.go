@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
 	"github.com/spokanepubliclibrary/fsip2/tests/testutil"
@@ -30,10 +31,11 @@ func TestBuildPatronStatusResponse_ValidPatronWithFees(t *testing.T) {
 		valid            bool
 		pinVerified      bool
 		sequenceNumber   string
-		currency         string
-		wantContains     []string
-		wantNotContains  []string
-		wantPatronStatus string
+		currency          string
+		supportedMessages []config.MessageSupport
+		wantContains      []string
+		wantNotContains   []string
+		wantPatronStatus  string
 	}{
 		{
 			name:      "Valid patron with fees and PIN verified",
@@ -258,6 +260,15 @@ func TestBuildPatronStatusResponse_ValidPatronWithFees(t *testing.T) {
 			pinVerified:      true,
 			sequenceNumber:   "8",
 			currency:         "USD",
+			supportedMessages: []config.MessageSupport{
+				{
+					Code:    "23",
+					Enabled: true,
+					Fields: []config.FieldConfiguration{
+						{Code: "AE", Enabled: true, PreferredFirstName: boolPtr(true)},
+					},
+				},
+			},
 			wantContains: []string{
 				"24",
 				"|AE" + "Johnson, Bob", // Should use preferred first name
@@ -330,6 +341,9 @@ func TestBuildPatronStatusResponse_ValidPatronWithFees(t *testing.T) {
 
 			// Create tenant config
 			tenantConfig := testutil.NewTenantConfig(testutil.WithCurrency(tt.currency))
+			if len(tt.supportedMessages) > 0 {
+				tenantConfig.SupportedMessages = tt.supportedMessages
+			}
 
 			// Create logger
 			logger := zap.NewNop()

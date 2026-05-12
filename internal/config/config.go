@@ -163,8 +163,9 @@ type MessageSupport struct {
 
 // FieldConfiguration represents field-level configuration for message responses
 type FieldConfiguration struct {
-	Code    string `yaml:"code"`
-	Enabled bool   `yaml:"enabled"`
+	Code               string `yaml:"code"`
+	Enabled            bool   `yaml:"enabled"`
+	PreferredFirstName *bool  `yaml:"preferredFirstName,omitempty"`
 }
 
 // Load loads configuration from a YAML file
@@ -358,6 +359,29 @@ func (tc *TenantConfig) IsFieldEnabled(messageCode, fieldCode string) bool {
 
 	// Message not found, default to enabled
 	return true
+}
+
+// GetFieldConfig returns the FieldConfiguration for a specific message+field pair, or nil if not found.
+func (tc *TenantConfig) GetFieldConfig(messageCode, fieldCode string) *FieldConfiguration {
+	for _, msg := range tc.SupportedMessages {
+		if msg.Code == messageCode {
+			for i, field := range msg.Fields {
+				if field.Code == fieldCode {
+					return &msg.Fields[i]
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// IsPreferredFirstNameEnabled returns true when preferredFirstName is explicitly true; defaults to false when unset.
+func (tc *TenantConfig) IsPreferredFirstNameEnabled(messageCode, fieldCode string) bool {
+	cfg := tc.GetFieldConfig(messageCode, fieldCode)
+	if cfg == nil || cfg.PreferredFirstName == nil {
+		return false
+	}
+	return *cfg.PreferredFirstName
 }
 
 // MapCirculationStatus maps a FOLIO item status to a SIP2 circulation status code

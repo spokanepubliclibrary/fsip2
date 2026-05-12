@@ -213,13 +213,17 @@ func (h *ItemInformationHandler) Handle(ctx context.Context, msg *parser.Message
 				}
 
 				// DA - Requestor Name (Step 17)
-				if request.Requester != nil {
-					if request.Requester.LastName != "" {
-						requestorName = request.Requester.LastName
-						if request.Requester.FirstName != "" {
-							requestorName += ", " + request.Requester.FirstName
-						}
+				usePreferred := session.TenantConfig.IsPreferredFirstNameEnabled("17", "DA")
+				if usePreferred && request.RequesterID != "" {
+					patronClient := h.getPatronClient(session)
+					requesterUser, err := patronClient.GetUserByID(ctx, token, request.RequesterID)
+					if err == nil && requesterUser != nil {
+						requestorName = h.formatPatronName(requesterUser, true)
+					} else {
+						requestorName = h.formatRequestorName(request.Requester)
 					}
+				} else {
+					requestorName = h.formatRequestorName(request.Requester)
 				}
 
 				// Only need the first awaiting pickup request
