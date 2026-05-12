@@ -69,7 +69,7 @@ This document provides a comprehensive reference for all supported SIP2 messages
 | Hold Shelf Expiration | CM | No | Yes | Hold shelf expiration date | Request → HoldShelfExpirationDate |
 | Requestor Name | DA | No | Yes | Patron name who placed hold | Request → Requester → LastName, FirstName |
 | Screen Message | AF | No | No | Messages for display | "Checkin successful" or error messages |
-| Print Line | AG | No | No | Print messages | Not implemented |
+| Print Line | AV | No | No | Print messages | Not implemented |
 
 ### Alert Type Calculation (CV Field)
 
@@ -252,6 +252,7 @@ When AB contains an item barcode, the response includes both item-level and bibl
 | Hold Shelf Expiration | CM | No | Yes | 18 chars | Hold expiration date | Request (Awaiting Pickup) → HoldShelfExpirationDate | `IsFieldEnabled("17", "CM")` |
 | Requestor Barcode | CY | No | Yes | Variable | Patron barcode of requestor | Request (Awaiting Pickup) → Requester → Barcode | `IsFieldEnabled("17", "CY")` |
 | Requestor Name | DA | No | Yes | Variable | Patron name of requestor | Request (Awaiting Pickup) → Requester → LastName, FirstName | `IsFieldEnabled("17", "DA")` |
+| Checkin Notes | AG | No | Yes | Variable | Item checkin notes (repeatable) | Item → CirculationNotes (Check in notes) | `IsFieldEnabled("17", "AG")` |
 | **Messages** |
 | Screen Message | AF | No | No | Variable | Status messages | "Item found" or "Item not found" | N/A |
 | Print Line | AG | No | No | Variable | Print messages | Not implemented | N/A |

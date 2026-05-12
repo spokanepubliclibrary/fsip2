@@ -46,6 +46,7 @@ type itemInformationResponseData struct {
 	holdShelfExpiration string
 	requestorBarcode    string
 	requestorName       string
+	checkinNotes        []string
 	screenMessage       []string
 	printLine           []string
 }
@@ -290,6 +291,16 @@ func (h *ItemInformationHandler) buildItemInformationResponse(
 	// Prepare response data
 	data := h.prepareItemResponseData(item, institutionID, itemIdentifier, dueDate, requests, routingLocation, holdShelfExpirationDate, requestorBarcode, requestorName, valid)
 
+	if h.tenantConfig.IsFieldEnabled("17", "AG") && item != nil {
+		data.checkinNotes = item.GetCheckinNotes()
+		if len(data.checkinNotes) > 0 {
+			h.logger.Debug("Found checkin notes",
+				zap.Int("count", len(data.checkinNotes)),
+				zap.Strings("notes", data.checkinNotes),
+			)
+		}
+	}
+
 	// Create ResponseBuilder using session's tenant config (not handler's default config)
 	responseBuilder := builder.NewResponseBuilder(session.TenantConfig)
 
@@ -317,6 +328,7 @@ func (h *ItemInformationHandler) buildItemInformationResponse(
 		data.holdShelfExpiration,
 		data.requestorBarcode,
 		data.requestorName,
+		data.checkinNotes,
 		data.screenMessage,
 		data.printLine,
 		"0", // sequence number
@@ -466,6 +478,7 @@ func (h *ItemInformationHandler) buildInstanceInformationResponse(
 		data.holdShelfExpiration,
 		data.requestorBarcode,
 		data.requestorName,
+		nil, // checkinNotes: not applicable for instance-level responses
 		data.screenMessage,
 		data.printLine,
 		"0", // sequence number

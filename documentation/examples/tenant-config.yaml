@@ -173,6 +173,8 @@ tenants:
           - code: "DA"  # Requestor name (lastName, firstName)
             enabled: true
             preferredFirstName: true  # When true, fetches full user record via /users/{id} for preferred name; falls back to firstName
+          - code: "AG"  # Checkin note (repeatable)
+            enabled: true
       - code: "29"  # Renew; BX position 15 in 98 response
         enabled: true
       - code: "65"  # Renew All; BX position 16 in 98 response
@@ -399,6 +401,8 @@ tenants:
           - code: "DA"  # Requestor name (lastName, firstName)
             enabled: true
             preferredFirstName: true  # When true, fetches full user record via /users/{id} for preferred name; falls back to firstName
+          - code: "AG"  # Checkin note (repeatable)
+            enabled: true
       - code: "29"  # Renew; BX position 15 in 98 response
         enabled: false
       - code: "65"  # Renew All; BX position 16 in 98 response

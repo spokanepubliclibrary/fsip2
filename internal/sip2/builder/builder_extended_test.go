@@ -446,6 +446,7 @@ func TestBuildItemInformationResponse(t *testing.T) {
 		"",                                           // holdShelfExpiration
 		"",                                           // requestorBarcode
 		"",                                           // requestorName
+		nil,                                          // checkinNotes
 		[]string{},                                   // screenMessage
 		[]string{},                                   // printLine
 		"0",

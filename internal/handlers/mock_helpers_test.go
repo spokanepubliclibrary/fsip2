@@ -4,6 +4,32 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 )
 
+// availableItemWithCheckinNotes builds a minimal available item that includes
+// one or more "Check in" type circulation notes, used to test AG field output.
+func availableItemWithCheckinNotes(id, barcode string, notes ...string) *models.Item {
+	circulationNotes := make([]models.CirculationNote, 0, len(notes))
+	for _, n := range notes {
+		circulationNotes = append(circulationNotes, models.CirculationNote{
+			NoteType: "Check in",
+			Note:     n,
+		})
+	}
+	return &models.Item{
+		ID:      id,
+		Barcode: barcode,
+		Status:  models.ItemStatus{Name: "Available"},
+		Location: &models.Location{
+			ID:   "loc-001",
+			Name: "Main Stacks",
+		},
+		MaterialType: &models.MaterialType{
+			ID:   "mt-001",
+			Name: "Book",
+		},
+		CirculationNotes: circulationNotes,
+	}
+}
+
 // mockRequester builds a RequestRequester with the given name fields.
 // preferredFirstName is accepted for call-site compatibility but ignored —
 // RequestRequester has no PreferredFirstName field; preferred-name logic now
