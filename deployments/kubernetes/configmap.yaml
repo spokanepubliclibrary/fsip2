@@ -115,12 +115,22 @@ data:
             enabled: true
           - code: "09"  # Checkin; BX position 3 in 98 response
             enabled: true
+            # Configurable fields for Checkin Response (10)
+            fields:
+              # Requestor name field
+              - code: "DA"  # Requestor name (lastName, firstName)
+                enabled: true
+                preferredFirstName: true  # When true, fetches full user record via /users/{id} for preferred name; falls back to firstName
           - code: "01"  # Block Patron; BX position 4 in 98 response
             enabled: false  # NOT IMPLEMENTED by this SIP2 service. Setting to true will be ignored; BX always shows N
           - code: "63"  # Patron Information; BX position 8 in 98 response
             enabled: true
             # Configurable fields for Patron Information Response (64)
             fields:
+              # Patron name field
+              - code: "AE"  # Patron name (lastName, firstName)
+                enabled: true
+                preferredFirstName: true  # Must be set explicitly; defaults to false. When true, uses preferredFirstName if present, falls back to firstName
               # Optional patron contact fields
               - code: "BF"  # Patron Phone (key: personal.phone)
                 enabled: true
@@ -178,8 +188,9 @@ data:
                 enabled: true
               - code: "CY"  # Requestor Barcode
                 enabled: true
-              - code: "DA"  # Requestor lastName, firstName
+              - code: "DA"  # Requestor name (lastName, firstName)
                 enabled: true
+                preferredFirstName: true  # When true, fetches full user record via /users/{id} for preferred name; falls back to firstName
           - code: "29"  # Renew; BX position 15 in 98 response
             enabled: true
           - code: "65"  # Renew All; BX position 16 in 98 response

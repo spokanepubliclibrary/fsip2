@@ -438,7 +438,8 @@ func (h *PatronInformationHandler) buildPatronInformationResponse(
 	if valid && user != nil {
 		// Add patron name using helper (consolidates duplicated logic)
 		if u, ok := user.(*models.User); ok {
-			patronName := h.formatPatronName(u)
+			usePreferred := session.TenantConfig.IsPreferredFirstNameEnabled("63", "AE")
+			patronName := h.formatPatronName(u, usePreferred)
 			response += fmt.Sprintf("|AE%s", patronName)
 
 			// Add contact information fields

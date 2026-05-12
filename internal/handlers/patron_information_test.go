@@ -563,6 +563,7 @@ func TestBuildPatronInformationResponse_ValidPatron(t *testing.T) {
 						Code:    "63",
 						Enabled: true,
 						Fields: []config.FieldConfiguration{
+							{Code: "AE", Enabled: true, PreferredFirstName: boolPtr(true)},
 							{Code: "BF", Enabled: true}, // Phone
 							{Code: "BG", Enabled: true}, // Mobile phone
 							{Code: "PC", Enabled: true}, // Patron group UUID

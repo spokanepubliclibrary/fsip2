@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/tests/testutil"
@@ -452,6 +453,258 @@ func TestCheckinHandle_InTransit_NoHold(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(resp, "10"), "response must start with 10")
 	assert.Contains(t, resp, "CV04", "CV=04 must be set for in-transit item with no hold")
+
+	mockInv.AssertExpectations(t)
+	mockCirc.AssertExpectations(t)
+}
+
+// TestCheckinHandle_DA_PreferredFirstName_Used verifies that when the request has a
+// RequesterID and the "10"/"DA" field config has preferredFirstName:true, the handler
+// calls GetUserByID and uses the user's PreferredFirstName in the DA field.
+func TestCheckinHandle_DA_PreferredFirstName_Used(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	tc.SupportedMessages = []config.MessageSupport{
+		{
+			Code: "09",
+			Fields: []config.FieldConfiguration{
+				{Code: "DA", Enabled: true, PreferredFirstName: boolPtr(true)},
+			},
+		},
+	}
+	sess := testutil.NewAuthSession(tc)
+	sess.SetLocationCode("SP-001")
+
+	item := &models.Item{
+		ID:      "item-pref-001",
+		Barcode: "ITEM-PREF-001",
+		Status:  models.ItemStatus{Name: "Awaiting pickup"},
+		Location: &models.Location{
+			ID:   "loc-001",
+			Name: "Main Stacks",
+		},
+		MaterialType: &models.MaterialType{
+			ID:   "mt-001",
+			Name: "Book",
+		},
+	}
+	loan := closedLoan()
+
+	expiration := time.Now().Add(7 * 24 * time.Hour)
+	holdRequest := models.Request{
+		ID:                      "req-pref-001",
+		RequestType:             "Hold",
+		Status:                  "Open - Awaiting pickup",
+		ItemID:                  item.ID,
+		RequesterID:             "user-smith-001",
+		PickupServicePointID:    "sp-local-uuid",
+		HoldShelfExpirationDate: &expiration,
+		Requester:               mockRequesterWithPreferredName("Smith", "Robert", ""),
+	}
+
+	// GetUserByID returns a full user record with PreferredFirstName set.
+	requesterUser := &models.User{
+		ID:       "user-smith-001",
+		Username: "rsmith",
+		Personal: models.PersonalInfo{
+			FirstName:          "Robert",
+			LastName:           "Smith",
+			PreferredFirstName: "Bob",
+		},
+	}
+
+	mockPatron := &MockPatronClient{}
+	mockInv := &MockInventoryClient{}
+	mockCirc := &MockCirculationClient{}
+
+	mockPatron.On("GetUserByID", mock.Anything, mock.Anything, "user-smith-001").Return(requesterUser, nil)
+	mockInv.On("GetItemByBarcode", mock.Anything, mock.Anything, "ITEM-PREF-001").Return(item, nil)
+	mockCirc.On("Checkin", mock.Anything, mock.Anything, mock.Anything).Return(loan, nil)
+	mockCirc.On("GetRequestsByItem", mock.Anything, mock.Anything, item.ID).
+		Return(&models.RequestCollection{Requests: []models.Request{holdRequest}}, nil)
+	mockInv.On("GetServicePointByID", mock.Anything, mock.Anything, "sp-local-uuid").
+		Return(&models.ServicePoint{ID: "sp-local-uuid", Name: "Main Library", Code: "ML"}, nil)
+
+	h := NewCheckinHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, mockPatron, mockCirc, mockInv, nil)
+
+	msg := buildTestMsg(parser.CheckinRequest, map[parser.FieldCode]string{
+		parser.InstitutionID:   "TEST-INST",
+		parser.ItemIdentifier:  "ITEM-PREF-001",
+		parser.CurrentLocation: "SP-001",
+	})
+
+	resp, err := h.Handle(context.Background(), msg, sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "10"), "response must start with 10")
+	assert.Contains(t, resp, "DASmith, Bob",
+		"DA field must use PreferredFirstName from GetUserByID when preferredFirstName:true is configured")
+	assert.NotContains(t, resp, "DASmith, Robert",
+		"DA field must not use regular FirstName when PreferredFirstName is set and preferred is enabled")
+
+	mockPatron.AssertExpectations(t)
+	mockInv.AssertExpectations(t)
+	mockCirc.AssertExpectations(t)
+}
+
+// TestCheckinHandle_DA_PreferredFirstName_FallbackWhenEmpty verifies that when
+// preferredFirstName:true is configured and RequesterID is set, but GetUserByID
+// returns a user with an empty PreferredFirstName, the DA field falls back to
+// the user's FirstName (via formatPatronName).
+func TestCheckinHandle_DA_PreferredFirstName_FallbackWhenEmpty(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	tc.SupportedMessages = []config.MessageSupport{
+		{
+			Code: "09",
+			Fields: []config.FieldConfiguration{
+				{Code: "DA", Enabled: true, PreferredFirstName: boolPtr(true)},
+			},
+		},
+	}
+	sess := testutil.NewAuthSession(tc)
+	sess.SetLocationCode("SP-001")
+
+	item := &models.Item{
+		ID:      "item-pref-002",
+		Barcode: "ITEM-PREF-002",
+		Status:  models.ItemStatus{Name: "Awaiting pickup"},
+		Location: &models.Location{
+			ID:   "loc-001",
+			Name: "Main Stacks",
+		},
+		MaterialType: &models.MaterialType{
+			ID:   "mt-001",
+			Name: "Book",
+		},
+	}
+	loan := closedLoan()
+
+	expiration := time.Now().Add(7 * 24 * time.Hour)
+	holdRequest := models.Request{
+		ID:                      "req-pref-002",
+		RequestType:             "Hold",
+		Status:                  "Open - Awaiting pickup",
+		ItemID:                  item.ID,
+		RequesterID:             "user-jones-002",
+		PickupServicePointID:    "sp-local-uuid",
+		HoldShelfExpirationDate: &expiration,
+		Requester:               mockRequesterWithPreferredName("Jones", "Alice", ""),
+	}
+
+	// GetUserByID returns a user with no PreferredFirstName — must fall back to FirstName.
+	requesterUser := &models.User{
+		ID:       "user-jones-002",
+		Username: "ajones",
+		Personal: models.PersonalInfo{
+			FirstName:          "Alice",
+			LastName:           "Jones",
+			PreferredFirstName: "", // empty — triggers fallback
+		},
+	}
+
+	mockPatron := &MockPatronClient{}
+	mockInv := &MockInventoryClient{}
+	mockCirc := &MockCirculationClient{}
+
+	mockPatron.On("GetUserByID", mock.Anything, mock.Anything, "user-jones-002").Return(requesterUser, nil)
+	mockInv.On("GetItemByBarcode", mock.Anything, mock.Anything, "ITEM-PREF-002").Return(item, nil)
+	mockCirc.On("Checkin", mock.Anything, mock.Anything, mock.Anything).Return(loan, nil)
+	mockCirc.On("GetRequestsByItem", mock.Anything, mock.Anything, item.ID).
+		Return(&models.RequestCollection{Requests: []models.Request{holdRequest}}, nil)
+	mockInv.On("GetServicePointByID", mock.Anything, mock.Anything, "sp-local-uuid").
+		Return(&models.ServicePoint{ID: "sp-local-uuid", Name: "Main Library", Code: "ML"}, nil)
+
+	h := NewCheckinHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, mockPatron, mockCirc, mockInv, nil)
+
+	msg := buildTestMsg(parser.CheckinRequest, map[parser.FieldCode]string{
+		parser.InstitutionID:   "TEST-INST",
+		parser.ItemIdentifier:  "ITEM-PREF-002",
+		parser.CurrentLocation: "SP-001",
+	})
+
+	resp, err := h.Handle(context.Background(), msg, sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "10"), "response must start with 10")
+	assert.Contains(t, resp, "DAJones, Alice",
+		"DA field must fall back to FirstName when PreferredFirstName is empty on the user record")
+
+	mockPatron.AssertExpectations(t)
+	mockInv.AssertExpectations(t)
+	mockCirc.AssertExpectations(t)
+}
+
+// TestCheckinHandle_DA_PreferredFirstName_Disabled verifies that when the "10"/"DA"
+// field config has preferredFirstName:false, the handler skips the GetUserByID call
+// entirely and uses formatRequestorName(req.Requester) — i.e. the FirstName from the
+// FOLIO request's embedded Requester object, not a user lookup.
+func TestCheckinHandle_DA_PreferredFirstName_Disabled(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	tc.SupportedMessages = []config.MessageSupport{
+		{
+			Code: "09",
+			Fields: []config.FieldConfiguration{
+				{Code: "DA", Enabled: true, PreferredFirstName: boolPtr(false)},
+			},
+		},
+	}
+	sess := testutil.NewAuthSession(tc)
+	sess.SetLocationCode("SP-001")
+
+	item := &models.Item{
+		ID:      "item-pref-003",
+		Barcode: "ITEM-PREF-003",
+		Status:  models.ItemStatus{Name: "Awaiting pickup"},
+		Location: &models.Location{
+			ID:   "loc-001",
+			Name: "Main Stacks",
+		},
+		MaterialType: &models.MaterialType{
+			ID:   "mt-001",
+			Name: "Book",
+		},
+	}
+	loan := closedLoan()
+
+	expiration := time.Now().Add(7 * 24 * time.Hour)
+	holdRequest := models.Request{
+		ID:                      "req-pref-003",
+		RequestType:             "Hold",
+		Status:                  "Open - Awaiting pickup",
+		ItemID:                  item.ID,
+		PickupServicePointID:    "sp-local-uuid",
+		HoldShelfExpirationDate: &expiration,
+		Requester:               mockRequesterWithPreferredName("Brown", "Catherine", "Cate"),
+	}
+
+	mockInv := &MockInventoryClient{}
+	mockCirc := &MockCirculationClient{}
+
+	mockInv.On("GetItemByBarcode", mock.Anything, mock.Anything, "ITEM-PREF-003").Return(item, nil)
+	mockCirc.On("Checkin", mock.Anything, mock.Anything, mock.Anything).Return(loan, nil)
+	mockCirc.On("GetRequestsByItem", mock.Anything, mock.Anything, item.ID).
+		Return(&models.RequestCollection{Requests: []models.Request{holdRequest}}, nil)
+	mockInv.On("GetServicePointByID", mock.Anything, mock.Anything, "sp-local-uuid").
+		Return(&models.ServicePoint{ID: "sp-local-uuid", Name: "Main Library", Code: "ML"}, nil)
+
+	h := NewCheckinHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, nil, mockCirc, mockInv, nil)
+
+	msg := buildTestMsg(parser.CheckinRequest, map[parser.FieldCode]string{
+		parser.InstitutionID:   "TEST-INST",
+		parser.ItemIdentifier:  "ITEM-PREF-003",
+		parser.CurrentLocation: "SP-001",
+	})
+
+	resp, err := h.Handle(context.Background(), msg, sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "10"), "response must start with 10")
+	assert.Contains(t, resp, "DABrown, Catherine",
+		"DA field must use FirstName (not preferred) when preferredFirstName:false is configured")
+	assert.NotContains(t, resp, "DABrown, Cate",
+		"DA field must not use PreferredFirstName when preferredFirstName:false is configured")
 
 	mockInv.AssertExpectations(t)
 	mockCirc.AssertExpectations(t)

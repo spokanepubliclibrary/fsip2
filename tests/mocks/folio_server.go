@@ -615,7 +615,7 @@ func (m *FolioMockServer) handlePayAccount(w http.ResponseWriter, r *http.Reques
 
 	response := models.PaymentResponse{
 		AccountID:       accountID,
-		Amount:          fmt.Sprintf("%.2f", payReq.Amount),
+		Amount:          fmt.Sprintf("%s", payReq.Amount),
 		RemainingAmount: "0.00",
 		FeeFineActions:  []models.FeeFineAction{},
 	}

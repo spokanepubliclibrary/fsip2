@@ -400,16 +400,22 @@ func (h *CheckinHandler) fetchCheckinResponseData(ctx context.Context, token str
 				}
 
 				// DA - Requestor Name (lastName, firstName format)
-				if req.Requester != nil {
-					if req.Requester.LastName != "" {
-						data.requestorName = req.Requester.LastName
-						if req.Requester.FirstName != "" {
-							data.requestorName += ", " + req.Requester.FirstName
-						}
-						h.logger.Debug("Found requestor name",
-							zap.String("requestor_name", data.requestorName),
-						)
+				usePreferred := session.TenantConfig.IsPreferredFirstNameEnabled("09", "DA")
+				if usePreferred && req.RequesterID != "" {
+					patronClient := h.getPatronClient(session)
+					requesterUser, err := patronClient.GetUserByID(ctx, token, req.RequesterID)
+					if err == nil && requesterUser != nil {
+						data.requestorName = h.formatPatronName(requesterUser, true)
+					} else {
+						data.requestorName = h.formatRequestorName(req.Requester)
 					}
+				} else {
+					data.requestorName = h.formatRequestorName(req.Requester)
+				}
+				if data.requestorName != "" {
+					h.logger.Debug("Found requestor name",
+						zap.String("requestor_name", data.requestorName),
+					)
 				}
 
 				// Only need the first awaiting pickup request

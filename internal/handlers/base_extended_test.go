@@ -95,7 +95,7 @@ func TestFormatPatronName_NilUser(t *testing.T) {
 	tc := testutil.NewTenantConfig()
 	h := NewBaseHandler(zap.NewNop(), tc)
 
-	result := h.formatPatronName(nil)
+	result := h.formatPatronName(nil, false)
 	if result != "" {
 		t.Errorf("formatPatronName(nil) = %q, want empty string", result)
 	}
@@ -113,7 +113,7 @@ func TestFormatPatronName_FirstNameOnly(t *testing.T) {
 			LastName:  "",
 		},
 	}
-	result := h.formatPatronName(user)
+	result := h.formatPatronName(user, false)
 	if result != "Jane" {
 		t.Errorf("formatPatronName() = %q, want %q", result, "Jane")
 	}
@@ -131,7 +131,7 @@ func TestFormatPatronName_UsernameOnly(t *testing.T) {
 			LastName:  "",
 		},
 	}
-	result := h.formatPatronName(user)
+	result := h.formatPatronName(user, false)
 	if result != "fallback_user" {
 		t.Errorf("formatPatronName() = %q, want %q", result, "fallback_user")
 	}
@@ -470,4 +470,163 @@ func TestGetAuthenticatedFolioClient_ExpiredToken_LogsAtDebugNotInfo(t *testing.
 		}
 	}
 	require.True(t, found, "expected 'Token expired, attempting automatic refresh' log entry")
+}
+
+// TestFormatPatronName covers all branches of the usePreferred flag and the
+// username fallback.
+func TestFormatPatronName(t *testing.T) {
+	tests := []struct {
+		name         string
+		user         *models.User
+		usePreferred bool
+		want         string
+	}{
+		{
+			name:         "nil user returns empty string",
+			user:         nil,
+			usePreferred: false,
+			want:         "",
+		},
+		{
+			name: "usePreferred true with PreferredFirstName set uses preferred name",
+			user: &models.User{
+				Username: "jdoe",
+				Personal: models.PersonalInfo{
+					LastName:           "Doe",
+					FirstName:          "John",
+					PreferredFirstName: "Johnny",
+				},
+			},
+			usePreferred: true,
+			want:         "Doe, Johnny",
+		},
+		{
+			name: "usePreferred true with PreferredFirstName empty falls back to FirstName",
+			user: &models.User{
+				Username: "jdoe",
+				Personal: models.PersonalInfo{
+					LastName:           "Doe",
+					FirstName:          "John",
+					PreferredFirstName: "",
+				},
+			},
+			usePreferred: true,
+			want:         "Doe, John",
+		},
+		{
+			name: "usePreferred false always uses FirstName ignoring PreferredFirstName",
+			user: &models.User{
+				Username: "jdoe",
+				Personal: models.PersonalInfo{
+					LastName:           "Doe",
+					FirstName:          "John",
+					PreferredFirstName: "Johnny",
+				},
+			},
+			usePreferred: false,
+			want:         "Doe, John",
+		},
+		{
+			name: "no personal name falls back to Username",
+			user: &models.User{
+				Username: "fallback_user",
+				Personal: models.PersonalInfo{
+					LastName:  "",
+					FirstName: "",
+				},
+			},
+			usePreferred: false,
+			want:         "fallback_user",
+		},
+		{
+			name: "LastName only no FirstName returns LastName alone",
+			user: &models.User{
+				Username: "jdoe",
+				Personal: models.PersonalInfo{
+					LastName:  "Doe",
+					FirstName: "",
+				},
+			},
+			usePreferred: false,
+			want:         "Doe",
+		},
+		{
+			name: "FirstName only no LastName returns FirstName alone",
+			user: &models.User{
+				Username: "jdoe",
+				Personal: models.PersonalInfo{
+					LastName:  "",
+					FirstName: "John",
+				},
+			},
+			usePreferred: false,
+			want:         "John",
+		},
+	}
+
+	tc := testutil.NewTenantConfig()
+	h := NewBaseHandler(zap.NewNop(), tc)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := h.formatPatronName(tt.user, tt.usePreferred)
+			if got != tt.want {
+				t.Errorf("formatPatronName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFormatRequestorName covers the nil-requester guard, the empty-LastName
+// guard, the last+first name path, and the last-name-only path.
+// Note: usePreferred logic was removed from formatRequestorName; preferred-name
+// handling now occurs at the handler level via GetUserByID.
+func TestFormatRequestorName(t *testing.T) {
+	tests := []struct {
+		name      string
+		requester *models.RequestRequester
+		want      string
+	}{
+		{
+			name:      "nil requester returns empty string",
+			requester: nil,
+			want:      "",
+		},
+		{
+			name: "empty LastName returns empty string",
+			requester: &models.RequestRequester{
+				FirstName: "John",
+				LastName:  "",
+			},
+			want: "",
+		},
+		{
+			name: "LastName and FirstName returns Last comma First",
+			requester: &models.RequestRequester{
+				LastName:  "Doe",
+				FirstName: "John",
+			},
+			want: "Doe, John",
+		},
+		{
+			name: "LastName only no FirstName returns LastName alone",
+			requester: &models.RequestRequester{
+				LastName:  "Doe",
+				FirstName: "",
+			},
+			want: "Doe",
+		},
+	}
+
+	tc := testutil.NewTenantConfig()
+	h := NewBaseHandler(zap.NewNop(), tc)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := h.formatRequestorName(tt.requester)
+			if got != tt.want {
+				t.Errorf("formatRequestorName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

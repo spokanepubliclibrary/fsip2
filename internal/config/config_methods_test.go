@@ -278,6 +278,158 @@ func TestTenantConfig_GetLibraryName(t *testing.T) {
 	}
 }
 
+// boolPtr returns a pointer to the given bool value, used in FieldConfiguration tests.
+func boolPtr(b bool) *bool { return &b }
+
+// TestTenantConfig_GetFieldConfig tests the GetFieldConfig method
+func TestTenantConfig_GetFieldConfig(t *testing.T) {
+	tc := &TenantConfig{
+		SupportedMessages: []MessageSupport{
+			{
+				Code:    "63",
+				Enabled: true,
+				Fields: []FieldConfiguration{
+					{Code: "AE", Enabled: true, PreferredFirstName: boolPtr(true)},
+					{Code: "AA", Enabled: false},
+				},
+			},
+			{
+				Code:    "23",
+				Enabled: true,
+				Fields:  []FieldConfiguration{},
+			},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		messageCode string
+		fieldCode   string
+		wantNil     bool
+		wantCode    string
+	}{
+		{
+			name:        "message code not in SupportedMessages returns nil",
+			messageCode: "99",
+			fieldCode:   "AE",
+			wantNil:     true,
+		},
+		{
+			name:        "message found but field code not in Fields returns nil",
+			messageCode: "63",
+			fieldCode:   "ZZ",
+			wantNil:     true,
+		},
+		{
+			name:        "both message and field found returns pointer",
+			messageCode: "63",
+			fieldCode:   "AE",
+			wantNil:     false,
+			wantCode:    "AE",
+		},
+		{
+			name:        "message found with disabled field returns pointer",
+			messageCode: "63",
+			fieldCode:   "AA",
+			wantNil:     false,
+			wantCode:    "AA",
+		},
+		{
+			name:        "message with empty Fields list returns nil for any field",
+			messageCode: "23",
+			fieldCode:   "AE",
+			wantNil:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tc.GetFieldConfig(tt.messageCode, tt.fieldCode)
+			if tt.wantNil {
+				if result != nil {
+					t.Errorf("GetFieldConfig(%q, %q) = %+v, want nil", tt.messageCode, tt.fieldCode, result)
+				}
+				return
+			}
+			if result == nil {
+				t.Fatalf("GetFieldConfig(%q, %q) = nil, want non-nil", tt.messageCode, tt.fieldCode)
+			}
+			if result.Code != tt.wantCode {
+				t.Errorf("GetFieldConfig(%q, %q).Code = %q, want %q", tt.messageCode, tt.fieldCode, result.Code, tt.wantCode)
+			}
+		})
+	}
+}
+
+// TestTenantConfig_IsPreferredFirstNameEnabled tests the IsPreferredFirstNameEnabled method
+func TestTenantConfig_IsPreferredFirstNameEnabled(t *testing.T) {
+	tests := []struct {
+		name        string
+		tc          *TenantConfig
+		messageCode string
+		fieldCode   string
+		want        bool
+	}{
+		{
+			name: "message not configured (nil field config) returns false",
+			tc: &TenantConfig{
+				SupportedMessages: []MessageSupport{},
+			},
+			messageCode: "63",
+			fieldCode:   "AE",
+			want:        false,
+		},
+		{
+			name: "field configured but PreferredFirstName nil returns false",
+			tc: &TenantConfig{
+				SupportedMessages: []MessageSupport{
+					{Code: "63", Enabled: true, Fields: []FieldConfiguration{
+						{Code: "AE", Enabled: true, PreferredFirstName: nil},
+					}},
+				},
+			},
+			messageCode: "63",
+			fieldCode:   "AE",
+			want:        false,
+		},
+		{
+			name: "field configured with PreferredFirstName explicitly true returns true",
+			tc: &TenantConfig{
+				SupportedMessages: []MessageSupport{
+					{Code: "63", Enabled: true, Fields: []FieldConfiguration{
+						{Code: "AE", Enabled: true, PreferredFirstName: boolPtr(true)},
+					}},
+				},
+			},
+			messageCode: "63",
+			fieldCode:   "AE",
+			want:        true,
+		},
+		{
+			name: "field configured with PreferredFirstName explicitly false returns false",
+			tc: &TenantConfig{
+				SupportedMessages: []MessageSupport{
+					{Code: "63", Enabled: true, Fields: []FieldConfiguration{
+						{Code: "AE", Enabled: true, PreferredFirstName: boolPtr(false)},
+					}},
+				},
+			},
+			messageCode: "63",
+			fieldCode:   "AE",
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.tc.IsPreferredFirstNameEnabled(tt.messageCode, tt.fieldCode)
+			if result != tt.want {
+				t.Errorf("IsPreferredFirstNameEnabled(%q, %q) = %v, want %v", tt.messageCode, tt.fieldCode, result, tt.want)
+			}
+		})
+	}
+}
+
 // TestConfig_GetScanPeriod tests the GetScanPeriod method
 func TestConfig_GetScanPeriod(t *testing.T) {
 	tests := []struct {
