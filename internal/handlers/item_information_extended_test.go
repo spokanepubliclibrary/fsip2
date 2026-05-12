@@ -491,6 +491,171 @@ func minInt(a, b int) int {
 	return b
 }
 
+// makeAGTestConfig builds a TenantConfig for message "17" with the AG field
+// configured according to enabled.
+func makeAGTestConfig(agEnabled bool) *config.TenantConfig {
+	return &config.TenantConfig{
+		Tenant:                   "test-tenant",
+		MessageDelimiter:         "\r",
+		FieldDelimiter:           "|",
+		Charset:                  "UTF-8",
+		CirculationStatusMapping: map[string]string{},
+		SupportedMessages: []config.MessageSupport{
+			{
+				Code:    "17",
+				Enabled: true,
+				Fields: []config.FieldConfiguration{
+					{
+						Code:    "AG",
+						Enabled: agEnabled,
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestBuildItemInformationResponse_AG_EnabledWithNotes verifies that when AG is
+// enabled and the item has checkin notes, each note appears as an AG field in
+// the serialised SIP2 response.
+func TestBuildItemInformationResponse_AG_EnabledWithNotes(t *testing.T) {
+	tc := makeAGTestConfig(true)
+	h := NewItemInformationHandler(zap.NewNop(), tc)
+	session := types.NewSession("ag-test", tc)
+
+	item := availableItemWithCheckinNotes("item-ag-001", "ITEM-AG-001",
+		"Handle with care", "Check spine condition")
+
+	resp := h.buildItemInformationResponse(
+		session, item, "INST01", "ITEM-AG-001",
+		nil, nil, "", nil, "", "", true,
+	)
+
+	if !strings.HasPrefix(resp, "18") {
+		t.Errorf("Response should start with '18', got: %s", resp[:minInt(5, len(resp))])
+	}
+	if !strings.Contains(resp, "AGHandle with care") {
+		t.Errorf("Response should contain AGHandle with care\nfull response: %s", resp)
+	}
+	if !strings.Contains(resp, "AGCheck spine condition") {
+		t.Errorf("Response should contain AGCheck spine condition\nfull response: %s", resp)
+	}
+}
+
+// TestBuildItemInformationResponse_AG_EnabledNoNotes verifies that when AG is
+// enabled but the item has no checkin notes, no AG field appears in the response.
+func TestBuildItemInformationResponse_AG_EnabledNoNotes(t *testing.T) {
+	tc := makeAGTestConfig(true)
+	h := NewItemInformationHandler(zap.NewNop(), tc)
+	session := types.NewSession("ag-test", tc)
+
+	item := availableItemNoHoldings("item-ag-002", "ITEM-AG-002")
+
+	resp := h.buildItemInformationResponse(
+		session, item, "INST01", "ITEM-AG-002",
+		nil, nil, "", nil, "", "", true,
+	)
+
+	if !strings.HasPrefix(resp, "18") {
+		t.Errorf("Response should start with '18', got: %s", resp[:minInt(5, len(resp))])
+	}
+	if strings.Contains(resp, "|AG") {
+		t.Errorf("Response should not contain AG field when item has no checkin notes\nfull response: %s", resp)
+	}
+}
+
+// TestBuildItemInformationResponse_AG_DisabledWithNotes verifies that when AG is
+// disabled in config, no AG field appears in the response even if the item has
+// checkin notes.
+func TestBuildItemInformationResponse_AG_DisabledWithNotes(t *testing.T) {
+	tc := makeAGTestConfig(false)
+	h := NewItemInformationHandler(zap.NewNop(), tc)
+	session := types.NewSession("ag-test", tc)
+
+	item := availableItemWithCheckinNotes("item-ag-003", "ITEM-AG-003", "Handle with care")
+
+	resp := h.buildItemInformationResponse(
+		session, item, "INST01", "ITEM-AG-003",
+		nil, nil, "", nil, "", "", true,
+	)
+
+	if !strings.HasPrefix(resp, "18") {
+		t.Errorf("Response should start with '18', got: %s", resp[:minInt(5, len(resp))])
+	}
+	if strings.Contains(resp, "|AG") {
+		t.Errorf("Response should not contain AG field when AG is disabled\nfull response: %s", resp)
+	}
+}
+
+// TestBuildItemInformationResponse_AG_MultipleNotes verifies that when AG is
+// enabled and the item has two checkin notes, both notes appear as separate AG
+// fields in the serialised SIP2 response.
+func TestBuildItemInformationResponse_AG_MultipleNotes(t *testing.T) {
+	tc := makeAGTestConfig(true)
+	h := NewItemInformationHandler(zap.NewNop(), tc)
+	session := types.NewSession("ag-test", tc)
+
+	item := availableItemWithCheckinNotes("item-ag-004", "ITEM-AG-004",
+		"Handle with care", "Check spine condition")
+
+	resp := h.buildItemInformationResponse(
+		session, item, "INST01", "ITEM-AG-004",
+		nil, nil, "", nil, "", "", true,
+	)
+
+	if !strings.HasPrefix(resp, "18") {
+		t.Errorf("Response should start with '18', got: %s", resp[:minInt(5, len(resp))])
+	}
+	if !strings.Contains(resp, "AGHandle with care") {
+		t.Errorf("Response should contain AGHandle with care\nfull response: %s", resp)
+	}
+	if !strings.Contains(resp, "AGCheck spine condition") {
+		t.Errorf("Response should contain AGCheck spine condition\nfull response: %s", resp)
+	}
+}
+
+// TestBuildItemInformationResponse_AG_MixedNoteTypes verifies that when AG is
+// enabled and the item has both a "Check in" note and a "Check out" note, only
+// the check-in note appears as an AG field — the checkout note must not appear.
+func TestBuildItemInformationResponse_AG_MixedNoteTypes(t *testing.T) {
+	tc := makeAGTestConfig(true)
+	h := NewItemInformationHandler(zap.NewNop(), tc)
+	session := types.NewSession("ag-test", tc)
+
+	item := &models.Item{
+		ID:      "item-ag-005",
+		Barcode: "ITEM-AG-005",
+		Status:  models.ItemStatus{Name: "Available"},
+		Location: &models.Location{
+			ID:   "loc-001",
+			Name: "Main Stacks",
+		},
+		MaterialType: &models.MaterialType{
+			ID:   "mt-001",
+			Name: "Book",
+		},
+		CirculationNotes: []models.CirculationNote{
+			{NoteType: "Check in", Note: "Inspect for damage"},
+			{NoteType: "Check out", Note: "Remind patron about DVD"},
+		},
+	}
+
+	resp := h.buildItemInformationResponse(
+		session, item, "INST01", "ITEM-AG-005",
+		nil, nil, "", nil, "", "", true,
+	)
+
+	if !strings.HasPrefix(resp, "18") {
+		t.Errorf("Response should start with '18', got: %s", resp[:minInt(5, len(resp))])
+	}
+	if !strings.Contains(resp, "AGInspect for damage") {
+		t.Errorf("Response should contain AGInspect for damage\nfull response: %s", resp)
+	}
+	if strings.Contains(resp, "AGRemind patron about DVD") {
+		t.Errorf("Response should not contain checkout note as AG field\nfull response: %s", resp)
+	}
+}
+
 // makeDATestConfig builds a TenantConfig with message "17" / field "DA" configured
 // with the supplied preferredFirstName pointer (nil → field absent, defaults to true).
 func makeDATestConfig(preferredFirstName *bool) *config.TenantConfig {

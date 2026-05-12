@@ -614,6 +614,7 @@ func (b *ResponseBuilder) BuildItemInformationResponse(
 	holdShelfExpiration string,
 	requestorBarcode string,
 	requestorName string,
+	checkinNotes []string,
 	screenMessage []string,
 	printLine []string,
 	sequenceNumber string,
@@ -721,6 +722,13 @@ func (b *ResponseBuilder) BuildItemInformationResponse(
 	// DA - Requestor name (configurable, omit if disabled or not present)
 	if b.config.IsFieldEnabled("17", "DA") && requestorName != "" {
 		content += protocol.BuildField(string(parser.TransactionDate), requestorName, delimiter)
+	}
+
+	// AG - Checkin notes (configurable, repeatable)
+	if b.config.IsFieldEnabled("17", "AG") {
+		for _, note := range checkinNotes {
+			content += protocol.BuildField("AG", note, delimiter)
+		}
 	}
 
 	// Add screen messages

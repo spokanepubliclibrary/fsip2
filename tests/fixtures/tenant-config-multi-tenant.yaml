@@ -7,6 +7,12 @@ tenants:
     okapiTenant: diku
     institutionID: "DIKU Library"     # AO field in 98 response
     libraryName:   "DIKU Test Library" # AM field in 98 response
+    supportedMessages:
+      - code: "17"  # Item Information
+        enabled: true
+        fields:
+          - code: "AG"  # Checkin note (repeatable)
+            enabled: true
 
   - tenant: snapshot
     okapiUrl: https://okapi-snapshot.example.com
