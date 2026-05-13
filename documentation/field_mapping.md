@@ -113,7 +113,8 @@ Most Automated Material Handlers (AMH) work with top-down rules. Here is an exam
 | Code/Field | Rule | Sort to | Logic |
 |------|-------------|-------|-----|
 | CV | = 01 | Bin 1 (local holds) | Hold exists for this branch |
-| CT | != 'Local Service Point' | Bin 5 (exceptions) | Item is in-transit to somewhere else |
+| CV | = 02 | Bin 5 (exceptions) | Item is in-transit to somewhere else |
+| CV | = 04 | Bin 5 (exceptions) | Held item is in-transit to somewhere else |
 | CH | = 'New DVDs' | Bin 2 | New DVD material type routes to bin 2 |
 | CH | = 'Adult Fiction' | Bin 3 | Adult Fiction material type routes to bin 3 |
 | CS | = '398.2%' | Bin 4 | Call No. Materials with **398.2 Anything** route to bin 4 |
