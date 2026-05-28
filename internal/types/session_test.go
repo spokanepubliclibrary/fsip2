@@ -229,6 +229,29 @@ func TestClear(t *testing.T) {
 	}
 }
 
+func TestSession_ClearPatron(t *testing.T) {
+	s := NewSession("test-id", newTestTenantConfig())
+	s.SetAuthenticated("user1", "patron-id", "patron-barcode", "token-abc", time.Now().Add(time.Hour))
+
+	s.ClearPatron()
+
+	if s.GetPatronID() != "" {
+		t.Errorf("PatronID should be empty after ClearPatron, got %q", s.GetPatronID())
+	}
+	if s.GetPatronBarcode() != "" {
+		t.Errorf("PatronBarcode should be empty after ClearPatron, got %q", s.GetPatronBarcode())
+	}
+	if !s.IsAuth() {
+		t.Error("IsAuthenticated should still be true after ClearPatron")
+	}
+	if s.GetAuthToken() == "" {
+		t.Error("AuthToken should be preserved after ClearPatron")
+	}
+	if s.GetUsername() == "" {
+		t.Error("Username should be preserved after ClearPatron")
+	}
+}
+
 func TestGetDuration(t *testing.T) {
 	s := NewSession("s1", nil)
 	time.Sleep(5 * time.Millisecond)

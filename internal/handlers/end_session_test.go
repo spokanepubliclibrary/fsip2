@@ -38,7 +38,7 @@ func TestEndSessionHandler_Handle_Success(t *testing.T) {
 		Fields: make(map[string]string),
 	}
 	msg.Fields[string(parser.InstitutionID)] = "TEST-INST"
-	msg.Fields[string(parser.PatronIdentifier)] = "patron-barcode"
+	msg.Fields[string(parser.PatronIdentifier)] = "patron-123"
 
 	ctx := context.Background()
 	response, err := handler.Handle(ctx, msg, session)
@@ -69,7 +69,7 @@ func TestEndSessionHandler_Handle_Success(t *testing.T) {
 	}
 
 	// Verify response contains patron identifier
-	if !strings.Contains(response, "AApatron-barcode") {
+	if !strings.Contains(response, "AApatron-123") {
 		t.Errorf("Response should contain patron identifier, got: %s", response)
 	}
 
@@ -78,17 +78,19 @@ func TestEndSessionHandler_Handle_Success(t *testing.T) {
 		t.Errorf("Response should contain success message, got: %s", response)
 	}
 
-	// Verify session was cleared
-	if session.IsAuth() {
-		t.Error("Expected session to be cleared after end session")
+	// ACS system credentials must survive End Patron Session
+	if !session.IsAuth() {
+		t.Error("Expected ACS session to remain authenticated after end patron session")
 	}
-
-	if session.GetAuthToken() != "" {
-		t.Error("Expected auth token to be cleared")
+	if session.GetAuthToken() == "" {
+		t.Error("Expected ACS auth token to be preserved after end patron session")
 	}
-
+	// Patron context must be cleared
 	if session.GetPatronID() != "" {
 		t.Error("Expected patron ID to be cleared")
+	}
+	if session.GetPatronBarcode() != "" {
+		t.Error("Expected patron barcode to be cleared")
 	}
 }
 

@@ -171,7 +171,9 @@ func (s *Session) IsTokenExpired() bool {
 	return time.Now().Add(90 * time.Second).After(s.TokenExpiresAt)
 }
 
-// Clear clears session data (for end session)
+// Clear resets all session state including ACS credentials.
+// Used when the TCP connection is torn down or fully re-established.
+// To reset between patrons while keeping the ACS login intact, use ClearPatron instead.
 func (s *Session) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -183,6 +185,17 @@ func (s *Session) Clear() {
 	s.PatronBarcode = ""
 	s.AuthToken = ""
 	s.TokenExpiresAt = time.Time{} // Reset to zero value
+	s.LastActivity = time.Now()
+}
+
+// ClearPatron clears the current patron context while preserving ACS system credentials.
+// Called by End Patron Session (35) to reset between patrons without dropping the
+// system-level login established by Login (93).
+func (s *Session) ClearPatron() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.PatronID = ""
+	s.PatronBarcode = ""
 	s.LastActivity = time.Now()
 }
 
