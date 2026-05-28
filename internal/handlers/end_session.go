@@ -49,8 +49,8 @@ func (h *EndSessionHandler) Handle(ctx context.Context, msg *parser.Message, ses
 		zap.String("session_id", session.ID),
 	)
 
-	// Clear session data
-	session.Clear()
+	// Clear patron context; ACS system credentials remain intact for the next patron
+	session.ClearPatron()
 
 	h.logger.Info("Patron session ended",
 		zap.String("session_id", session.ID),
