@@ -215,7 +215,7 @@ func (h *PatronInformationHandler) Handle(ctx context.Context, msg *parser.Messa
 	// ALWAYS fetch patron's loans for accurate counts
 	var loans []*models.Loan
 	var overdueLoans []*models.Loan
-	loansCollection, err := circulationClient.GetOpenLoansByUser(ctx, token, user.ID)
+	loansCollection, err := circulationClient.GetOpenLoansByUser(ctx, token, user.ID, session.TenantConfig.GetPatronItemsLimit())
 	if err != nil {
 		h.logger.Warn("Failed to get patron loans",
 			zap.String("patron_id", user.ID),

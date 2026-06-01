@@ -116,8 +116,8 @@ func (m *MockCirculationClient) GetLoansByUser(ctx context.Context, token, userI
 	return args.Get(0).(*models.LoanCollection), args.Error(1)
 }
 
-func (m *MockCirculationClient) GetOpenLoansByUser(ctx context.Context, token, userID string) (*models.LoanCollection, error) {
-	args := m.Called(ctx, token, userID)
+func (m *MockCirculationClient) GetOpenLoansByUser(ctx context.Context, token, userID string, limit int) (*models.LoanCollection, error) {
+	args := m.Called(ctx, token, userID, limit)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

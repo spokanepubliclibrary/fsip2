@@ -28,7 +28,7 @@ type CirculationLookup interface {
 	Renew(ctx context.Context, token string, req folio.RenewRequest) (*models.Loan, error)
 	RenewByID(ctx context.Context, token string, req folio.RenewByIDRequest) (*models.Loan, error)
 	GetLoansByUser(ctx context.Context, token, userID string) (*models.LoanCollection, error)
-	GetOpenLoansByUser(ctx context.Context, token, userID string) (*models.LoanCollection, error)
+	GetOpenLoansByUser(ctx context.Context, token, userID string, limit int) (*models.LoanCollection, error)
 	GetOpenRequestsByUser(ctx context.Context, token, userID string) (*models.RequestCollection, error)
 	GetAvailableHolds(ctx context.Context, token, userID string) (*models.RequestCollection, error)
 	GetUnavailableHolds(ctx context.Context, token, userID string) (*models.RequestCollection, error)

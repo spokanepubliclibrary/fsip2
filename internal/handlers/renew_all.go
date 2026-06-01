@@ -109,7 +109,7 @@ func (h *RenewAllHandler) Handle(ctx context.Context, msg *parser.Message, sessi
 	}
 
 	// Get open loans for the patron
-	loanCollection, err := circClient.GetOpenLoansByUser(ctx, token, patronID)
+	loanCollection, err := circClient.GetOpenLoansByUser(ctx, token, patronID, config.OKAPIUnlimitedLimit)
 	if err != nil {
 		h.logger.Error("Failed to get patron loans",
 			zap.String("patron_id", patronID),

@@ -25,6 +25,10 @@ func WithRollingRenewal(cfg *config.RollingRenewalConfig) TenantOption {
 	return func(tc *config.TenantConfig) { tc.RollingRenewals = cfg }
 }
 
+func WithPatronItemsLimit(n int) TenantOption {
+	return func(tc *config.TenantConfig) { tc.PatronItemsLimit = n }
+}
+
 // NewTenantConfig returns a TenantConfig suitable for tests.
 // Defaults: test-tenant, loopback OkapiURL, "|" field delimiter, CR message delimiter, UTF-8, USD.
 func NewTenantConfig(opts ...TenantOption) *config.TenantConfig {
