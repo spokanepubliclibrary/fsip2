@@ -11,6 +11,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// OKAPIUnlimitedLimit is the pagination limit value passed to FOLIO/OKAPI queries
+// when no cap is desired. It equals math.MaxInt32, which is the Java Integer.MAX_VALUE
+// that OKAPI uses as its effective "unlimited" sentinel.
+const OKAPIUnlimitedLimit = 2147483647
+
 // Config represents the main application configuration
 type Config struct {
 	Port                int            `yaml:"port"`
@@ -105,6 +110,7 @@ type TenantConfig struct {
 	Currency                           string            `yaml:"currency"`                           // Currency code (e.g., USD, EUR)
 	CirculationStatusMapping           map[string]string `yaml:"circulationStatusMapping,omitempty"` // FOLIO status -> SIP2 code
 	RenewAllMaxItems                   int               `yaml:"renewAllMaxItems,omitempty"`         // Maximum items to process in renew all (default: 50)
+	PatronItemsLimit                   int               `yaml:"patronItemsLimit,omitempty"`         // 0 or absent = no limit (uses FOLIO max)
 
 	// Fee/Fine payment settings
 	AcceptBulkPayment bool   `yaml:"acceptBulkPayment"` // Enable bulk payment fallback when account ID not found/provided (default: false)
@@ -438,6 +444,15 @@ func (tc *TenantConfig) GetRenewAllMaxItems() int {
 		return 50 // Default limit
 	}
 	return tc.RenewAllMaxItems
+}
+
+// GetPatronItemsLimit returns the maximum number of open loans to fetch per patron for
+// the 64 (Patron Information) response AU field. 0 or absent means no limit (uses FOLIO max).
+func (tc *TenantConfig) GetPatronItemsLimit() int {
+	if tc.PatronItemsLimit <= 0 {
+		return OKAPIUnlimitedLimit // FOLIO/OKAPI effective max — unlimited
+	}
+	return tc.PatronItemsLimit
 }
 
 // GetPaymentMethod returns the payment method for fee/fine payments

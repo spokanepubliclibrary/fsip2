@@ -430,6 +430,55 @@ func TestTenantConfig_IsPreferredFirstNameEnabled(t *testing.T) {
 	}
 }
 
+// TestTenantConfig_GetPatronItemsLimit tests the GetPatronItemsLimit method
+func TestTenantConfig_GetPatronItemsLimit(t *testing.T) {
+	tests := []struct {
+		name     string
+		limit    int
+		expected int
+	}{
+		{
+			name:     "Zero value returns max int32 (no limit)",
+			limit:    0,
+			expected: 2147483647,
+		},
+		{
+			name:     "Negative value returns max int32 (no limit)",
+			limit:    -1,
+			expected: 2147483647,
+		},
+		{
+			name:     "Configured positive value is returned as-is",
+			limit:    25,
+			expected: 25,
+		},
+		{
+			name:     "Minimum positive value is returned as-is",
+			limit:    1,
+			expected: 1,
+		},
+		{
+			name:     "Max int32 value passes through unchanged",
+			limit:    2147483647,
+			expected: 2147483647,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := &TenantConfig{
+				PatronItemsLimit: tt.limit,
+			}
+
+			result := tc.GetPatronItemsLimit()
+
+			if result != tt.expected {
+				t.Errorf("GetPatronItemsLimit() = %d, want %d", result, tt.expected)
+			}
+		})
+	}
+}
+
 // TestConfig_GetScanPeriod tests the GetScanPeriod method
 func TestConfig_GetScanPeriod(t *testing.T) {
 	tests := []struct {

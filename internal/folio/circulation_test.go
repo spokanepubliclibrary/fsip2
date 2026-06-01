@@ -280,7 +280,7 @@ func TestGetOpenLoansByUser_Success(t *testing.T) {
 	client := NewCirculationClient(server.URL, "test-tenant")
 	ctx := context.Background()
 
-	loans, err := client.GetOpenLoansByUser(ctx, "test-token", "user-123")
+	loans, err := client.GetOpenLoansByUser(ctx, "test-token", "user-123", 2147483647)
 	if err != nil {
 		t.Fatalf("GetOpenLoansByUser failed: %v", err)
 	}

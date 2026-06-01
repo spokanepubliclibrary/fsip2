@@ -120,9 +120,9 @@ func (cc *CirculationClient) GetLoansByUser(ctx context.Context, token string, u
 }
 
 // GetOpenLoansByUser retrieves open loans for a user
-func (cc *CirculationClient) GetOpenLoansByUser(ctx context.Context, token string, userID string) (*models.LoanCollection, error) {
+func (cc *CirculationClient) GetOpenLoansByUser(ctx context.Context, token string, userID string, limit int) (*models.LoanCollection, error) {
 	query := fmt.Sprintf("userId==%s and status.name==Open", userID)
-	path := fmt.Sprintf("/circulation/loans?query=%s", url.QueryEscape(query))
+	path := fmt.Sprintf("/circulation/loans?limit=%d&query=%s", limit, url.QueryEscape(query))
 
 	var loans models.LoanCollection
 	err := cc.client.Get(ctx, path, token, &loans)

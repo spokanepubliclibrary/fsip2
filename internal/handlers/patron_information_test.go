@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -1735,5 +1736,160 @@ func TestBuildPatronInformationResponse_DetailsMatchCounts(t *testing.T) {
 	}
 	if cdCount != 2 {
 		t.Errorf("CD field count: want 2, got %d", cdCount)
+	}
+}
+
+// TestBuildPatronInformationResponse_PatronItemsLimit_NoLimit verifies that when
+// PatronItemsLimit is 0 (no limit), all loans appear as AU fields in the response.
+func TestBuildPatronInformationResponse_PatronItemsLimit_NoLimit(t *testing.T) {
+	tenantConfig := &config.TenantConfig{
+		Tenant:                "test-tenant",
+		ErrorDetectionEnabled: false,
+		Charset:               "UTF-8",
+		PatronItemsLimit:      0, // zero = no limit
+	}
+
+	logger := zap.NewNop()
+	handler := NewPatronInformationHandler(logger, tenantConfig)
+	session := types.NewSession("test-session", tenantConfig)
+
+	user := &models.User{
+		ID:       "user-123",
+		Username: "testuser",
+		Barcode:  "123456789",
+		Personal: models.PersonalInfo{
+			LastName:  "Test",
+			FirstName: "User",
+		},
+	}
+
+	// 15 loans, each with a distinct item barcode
+	loans := make([]*models.Loan, 15)
+	for i := 0; i < 15; i++ {
+		barcode := fmt.Sprintf("LOAN%03d", i+1)
+		loans[i] = &models.Loan{
+			ID:   fmt.Sprintf("loan-%d", i+1),
+			Item: &models.Item{Barcode: barcode},
+		}
+	}
+
+	// Summary position 2 = 'Y' requests charged items (AU) details
+	response := handler.buildPatronInformationResponse(
+		user,
+		nil,
+		nil,
+		nil,
+		loans,
+		nil,
+		nil,
+		nil,
+		nil,
+		"TEST-INST",
+		"123456789",
+		"000",
+		"  Y       ", // position 2 = 'Y' = charged items requested
+		true,
+		true,
+		"0",
+		session,
+	)
+
+	// Charged items count fixed field (positions 45-49) must be "0015"
+	if len(response) < 61 {
+		t.Fatalf("Response too short: %s", response)
+	}
+	chargedCount := response[45:49]
+	if chargedCount != "0015" {
+		t.Errorf("Charged count: want %q, got %q", "0015", chargedCount)
+	}
+
+	// All 15 barcodes must appear as |AU fields
+	auCount := strings.Count(response, "|AU")
+	if auCount != 15 {
+		t.Errorf("AU field count: want 15, got %d (response: %s)", auCount, response)
+	}
+	for i := 1; i <= 15; i++ {
+		barcode := fmt.Sprintf("LOAN%03d", i)
+		if !strings.Contains(response, "|AU"+barcode) {
+			t.Errorf("Response should contain |AU%s", barcode)
+		}
+	}
+}
+
+// TestBuildPatronInformationResponse_PatronItemsLimit_Positive verifies that when
+// PatronItemsLimit is set to a positive value, the response reflects exactly that
+// many loans (the mock always returns the pre-configured slice).
+func TestBuildPatronInformationResponse_PatronItemsLimit_Positive(t *testing.T) {
+	tenantConfig := &config.TenantConfig{
+		Tenant:                "test-tenant",
+		ErrorDetectionEnabled: false,
+		Charset:               "UTF-8",
+		PatronItemsLimit:      5, // cap at 5
+	}
+
+	logger := zap.NewNop()
+	handler := NewPatronInformationHandler(logger, tenantConfig)
+	session := types.NewSession("test-session", tenantConfig)
+
+	user := &models.User{
+		ID:       "user-123",
+		Username: "testuser",
+		Barcode:  "123456789",
+		Personal: models.PersonalInfo{
+			LastName:  "Test",
+			FirstName: "User",
+		},
+	}
+
+	// Mock returns exactly 5 loans (matching the limit passed by the handler)
+	loans := make([]*models.Loan, 5)
+	for i := 0; i < 5; i++ {
+		barcode := fmt.Sprintf("LOAN%03d", i+1)
+		loans[i] = &models.Loan{
+			ID:   fmt.Sprintf("loan-%d", i+1),
+			Item: &models.Item{Barcode: barcode},
+		}
+	}
+
+	// Summary position 2 = 'Y' requests charged items (AU) details
+	response := handler.buildPatronInformationResponse(
+		user,
+		nil,
+		nil,
+		nil,
+		loans,
+		nil,
+		nil,
+		nil,
+		nil,
+		"TEST-INST",
+		"123456789",
+		"000",
+		"  Y       ", // position 2 = 'Y' = charged items requested
+		true,
+		true,
+		"0",
+		session,
+	)
+
+	// Charged items count fixed field (positions 45-49) must be "0005"
+	if len(response) < 61 {
+		t.Fatalf("Response too short: %s", response)
+	}
+	chargedCount := response[45:49]
+	if chargedCount != "0005" {
+		t.Errorf("Charged count: want %q, got %q", "0005", chargedCount)
+	}
+
+	// Exactly 5 AU fields must be present
+	auCount := strings.Count(response, "|AU")
+	if auCount != 5 {
+		t.Errorf("AU field count: want 5, got %d (response: %s)", auCount, response)
+	}
+	for i := 1; i <= 5; i++ {
+		barcode := fmt.Sprintf("LOAN%03d", i)
+		if !strings.Contains(response, "|AU"+barcode) {
+			t.Errorf("Response should contain |AU%s", barcode)
+		}
 	}
 }

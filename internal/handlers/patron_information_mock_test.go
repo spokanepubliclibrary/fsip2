@@ -35,7 +35,7 @@ func setupPatronInfoMocks(mockPatron *MockPatronClient, mockCirc *MockCirculatio
 		Return(&models.AutomatedPatronBlock{}, nil)
 	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID).
 		Return(&models.RequestCollection{}, nil)
-	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID, mock.Anything).
 		Return(&models.LoanCollection{}, nil)
 	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID).
 		Return(&models.RequestCollection{}, nil)
@@ -99,7 +99,7 @@ func TestPatronInformationHandle_ValidPatron_WithLoans(t *testing.T) {
 		Return(&models.AutomatedPatronBlock{}, nil)
 	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID).
 		Return(&models.RequestCollection{}, nil)
-	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID, mock.Anything).
 		Return(loans, nil)
 	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID).
 		Return(&models.RequestCollection{}, nil)
@@ -149,7 +149,7 @@ func TestPatronInformationHandle_ValidPatron_WithHolds(t *testing.T) {
 		Return(&models.AutomatedPatronBlock{}, nil)
 	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID).
 		Return(holds, nil)
-	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID, mock.Anything).
 		Return(&models.LoanCollection{}, nil)
 	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID).
 		Return(&models.RequestCollection{}, nil)
@@ -196,7 +196,7 @@ func TestPatronInformationHandle_ValidPatron_WithFees(t *testing.T) {
 		Return(&models.AutomatedPatronBlock{}, nil)
 	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID).
 		Return(&models.RequestCollection{}, nil)
-	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID, mock.Anything).
 		Return(&models.LoanCollection{}, nil)
 	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID).
 		Return(&models.RequestCollection{}, nil)
