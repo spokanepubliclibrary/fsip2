@@ -34,6 +34,12 @@ func TestRenewHandler_SuccessfulRenewal(t *testing.T) {
 				},
 			}
 			json.NewEncoder(w).Encode(loan)
+		case strings.Contains(r.URL.Path, "/inventory/instances/"):
+			instance := models.Instance{
+				ID:    "instance-123",
+				Title: "Test Renewal Title",
+			}
+			json.NewEncoder(w).Encode(instance)
 		default:
 			http.NotFound(w, r)
 		}
@@ -91,6 +97,9 @@ func TestRenewHandler_SuccessfulRenewal(t *testing.T) {
 	}
 	if !strings.Contains(response, "ABITEM001") {
 		t.Errorf("Expected item identifier in response: %s", response)
+	}
+	if !strings.Contains(response, "AJTest Renewal Title") {
+		t.Errorf("Expected instance title in AJ field: %s", response)
 	}
 }
 
@@ -575,6 +584,12 @@ func TestRenewHandler_InstanceIDFallback(t *testing.T) {
 				InstanceID: "instance-123", // Retrieved from holdings
 			}
 			json.NewEncoder(w).Encode(holdings)
+		case strings.Contains(r.URL.Path, "/inventory/instances/"):
+			instance := models.Instance{
+				ID:    "instance-123",
+				Title: "Test Instance Title",
+			}
+			json.NewEncoder(w).Encode(instance)
 		default:
 			http.NotFound(w, r)
 		}
@@ -613,9 +628,9 @@ func TestRenewHandler_InstanceIDFallback(t *testing.T) {
 		t.Errorf("Expected success indicator in response: %s", response)
 	}
 
-	// Should contain instance ID in title field (AJ)
-	if !strings.Contains(response, "AJinstance-123") {
-		t.Errorf("Expected instance ID in title field: %s", response)
+	// Should contain instance title in AJ field
+	if !strings.Contains(response, "AJTest Instance Title") {
+		t.Errorf("Expected instance title in AJ field: %s", response)
 	}
 }
 
@@ -637,6 +652,12 @@ func TestRenewHandler_DueDateFormatting(t *testing.T) {
 				},
 			}
 			json.NewEncoder(w).Encode(loan)
+		case strings.Contains(r.URL.Path, "/inventory/instances/"):
+			instance := models.Instance{
+				ID:    "instance-123",
+				Title: "Due Date Test Title",
+			}
+			json.NewEncoder(w).Encode(instance)
 		default:
 			http.NotFound(w, r)
 		}

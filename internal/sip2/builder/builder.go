@@ -248,7 +248,7 @@ func (b *ResponseBuilder) BuildRenewResponse(
 	content += protocol.BuildField(string(parser.PatronIdentifier), patronID, delimiter)
 	content += protocol.BuildField(string(parser.ItemIdentifier), itemID, delimiter)
 
-	// AJ field - Title Identifier (Instance UUID in our implementation)
+	// AJ field - Title Identifier (instance title, truncated to 60 chars)
 	if titleID != "" {
 		content += protocol.BuildField(string(parser.TitleIdentifier), titleID, delimiter)
 	}
