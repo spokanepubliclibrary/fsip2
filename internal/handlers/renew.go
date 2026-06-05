@@ -169,6 +169,7 @@ func (h *RenewHandler) Handle(ctx context.Context, msg *parser.Message, session 
 	}
 
 	// Extract instance ID from loan response
+	inventoryClient := h.getInventoryClient(session)
 	var instanceID string
 	if loan.Item != nil && loan.Item.InstanceID != "" {
 		instanceID = loan.Item.InstanceID
@@ -181,7 +182,6 @@ func (h *RenewHandler) Handle(ctx context.Context, msg *parser.Message, session 
 		h.logger.Warn("Instance ID not found in renewal response, attempting item lookup",
 			zap.String("item_id", loan.ItemID),
 		)
-		inventoryClient := h.getInventoryClient(session)
 		item, err := inventoryClient.GetItemByID(ctx, token, loan.ItemID)
 		if err != nil {
 			h.logger.Error("Failed to lookup item for instance ID",
@@ -208,7 +208,17 @@ func (h *RenewHandler) Handle(ctx context.Context, msg *parser.Message, session 
 		}
 	}
 
-	return h.buildRenewResponse(true, institutionID, patronIdentifier, itemIdentifier, dueDate, instanceID, msg, session.TenantConfig), nil
+	// Fetch instance title for AJ field
+	var instanceTitle string
+	if instanceID != "" {
+		if instance, err := inventoryClient.GetInstanceByID(ctx, token, instanceID); err != nil {
+			h.logger.Warn("Failed to fetch instance title for renewal response",
+				zap.String("instance_id", instanceID), zap.Error(err))
+		} else {
+			instanceTitle = truncateString(instance.Title, 60)
+		}
+	}
+	return h.buildRenewResponse(true, institutionID, patronIdentifier, itemIdentifier, dueDate, instanceTitle, msg, session.TenantConfig), nil
 }
 
 // buildRenewResponseWithError builds a Renew Response with a specific error message
@@ -261,7 +271,7 @@ func (h *RenewHandler) buildRenewResponseWithError(ok bool, institutionID, patro
 }
 
 // buildRenewResponse builds a Renew Response (30) using the ResponseBuilder
-func (h *RenewHandler) buildRenewResponse(ok bool, institutionID, patronIdentifier, itemIdentifier string, dueDate time.Time, instanceID string, msg *parser.Message, tenantConfig *config.TenantConfig) string {
+func (h *RenewHandler) buildRenewResponse(ok bool, institutionID, patronIdentifier, itemIdentifier string, dueDate time.Time, titleID string, msg *parser.Message, tenantConfig *config.TenantConfig) string {
 	// Debug: Log field delimiter value
 	h.logger.Debug("Building renewal response",
 		zap.String("field_delimiter", tenantConfig.FieldDelimiter),
@@ -281,10 +291,9 @@ func (h *RenewHandler) buildRenewResponse(ok bool, institutionID, patronIdentifi
 		screenMessages = []string{"Renewal failed"}
 	}
 
-	// Handle missing instance ID - fallback to item barcode
-	titleID := instanceID
+	// Handle missing title - fallback to item barcode
 	if titleID == "" {
-		h.logger.Warn("Instance ID not available for renewal response, using item barcode as fallback",
+		h.logger.Warn("Title not available for renewal response, using item barcode as fallback",
 			zap.String("item_identifier", itemIdentifier),
 		)
 		titleID = itemIdentifier
@@ -306,7 +315,7 @@ func (h *RenewHandler) buildRenewResponse(ok bool, institutionID, patronIdentifi
 		institutionID,    // institutionID
 		patronIdentifier, // patronID
 		itemIdentifier,   // itemID
-		titleID,          // titleID (Instance UUID or fallback to item barcode)
+		titleID,          // titleID (instance title truncated to 60 chars, or fallback to item barcode)
 		dueDate,          // dueDate
 		screenMessages,   // screenMessage
 		[]string{},       // printLine (empty)

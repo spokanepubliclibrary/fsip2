@@ -617,20 +617,20 @@ Each position is 'Y' (true) or ' ' (space, false):
 
 ### Response Fields (30)
 
-| Field | Code | Required | Description | FOLIO Source |
-|-------|------|----------|-------------|--------------|
-| OK | Fixed | Yes | Renew success (1) or failure (0) | Renewal API response |
-| Renewal OK | Fixed | Yes | Renewal allowed (Y/N) | Renewal API response |
-| Magnetic Media | Fixed | Yes | Magnetic media (Y/N/U) | Hardcoded: U |
-| Desensitize | Fixed | Yes | Desensitize (Y/N/U) | Hardcoded: U |
-| Transaction Date | Fixed | Yes | Date/time of transaction | Current timestamp |
-| Institution ID | AO | Yes | Institution identifier | Request echo |
-| Patron Identifier | AA | Yes | Patron barcode | Request echo |
-| Item Identifier | AB | Yes | Item barcode | Request echo |
-| Title Identifier | AJ | No | Instance UUID | Loan → Item → Holdings → InstanceID |
-| Due Date | AH | No | New due date | Loan → DueDate (updated) |
-| Screen Message | AF | No | Messages for display | Success/error messages |
-| Print Line | AG | No | Print messages | Not implemented |
+| Field | Code | Required | Configurable | Description | FOLIO Source |
+|-------|------|----------|--------------|-------------|--------------|
+| OK | Fixed | Yes | No | Renew success (1) or failure (0) | Renewal API response |
+| Renewal OK | Fixed | Yes | No | Renewal allowed (Y/N) | Renewal API response |
+| Magnetic Media | Fixed | Yes | No | Magnetic media (Y/N/U) | Hardcoded: U |
+| Desensitize | Fixed | Yes | No | Desensitize (Y/N/U) | Hardcoded: U |
+| Transaction Date | Fixed | Yes | No | Date/time of transaction | Current timestamp |
+| Institution ID | AO | Yes | No | Institution identifier | Request echo |
+| Patron Identifier | AA | Yes | No | Patron barcode | Request echo |
+| Item Identifier | AB | Yes | No | Item barcode | Request echo |
+| Title Identifier | AJ | Yes | No | Instance title (truncated to 60 chars) | Loan → Item → Instance → Title |
+| Due Date | AH | No | No | New due date | Loan → DueDate (updated) |
+| Screen Message | AF | No | No | Messages for display | Success/error messages |
+| Print Line | AG | No | No | Print messages | Not implemented |
 
 ---
 
