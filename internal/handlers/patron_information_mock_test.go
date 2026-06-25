@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/tests/testutil"
@@ -24,6 +25,17 @@ func patronInfoMsg(barcode string) *parser.Message {
 	})
 }
 
+// patronInfoMsgWithSummary builds a PatronInformation request message with the
+// given 10-character summary field, controlling which itemized details (AS,
+// AT, AU, AV, CD) the response includes.
+func patronInfoMsgWithSummary(barcode, summary string) *parser.Message {
+	return buildTestMsg(parser.PatronInformationRequest, map[parser.FieldCode]string{
+		parser.InstitutionID:        "TEST-INST",
+		parser.PatronIdentifier:     barcode,
+		parser.FieldCode("summary"): summary,
+	})
+}
+
 // setupPatronInfoMocks sets up the standard minimal mocks for PatronInformation Handle():
 // user lookup, holds, loans, accounts, unavailable holds, and blocks.
 // Only mocks that are needed to reach the response-building stage are registered.
@@ -33,11 +45,11 @@ func setupPatronInfoMocks(mockPatron *MockPatronClient, mockCirc *MockCirculatio
 		Return(&models.ManualBlockCollection{}, nil)
 	mockPatron.On("GetAutomatedPatronBlocks", mock.Anything, mock.Anything, user.ID).
 		Return(&models.AutomatedPatronBlock{}, nil)
-	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID, 0).
 		Return(&models.RequestCollection{}, nil)
 	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID, mock.Anything).
 		Return(&models.LoanCollection{}, nil)
-	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID, 0).
 		Return(&models.RequestCollection{}, nil)
 	mockFees.On("GetOpenAccountsExcludingSuspended", mock.Anything, mock.Anything, user.ID).
 		Return(&models.AccountCollection{}, nil)
@@ -90,21 +102,21 @@ func TestPatronInformationHandle_ValidPatron_WithLoans(t *testing.T) {
 			{ID: "loan-2", ItemID: "item-bbb", DueDate: &futureDue},
 		},
 	}
-	item := &models.Item{ID: "item-x", Barcode: "ITEM-X"}
 
 	mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
 	mockPatron.On("GetManualBlocks", mock.Anything, mock.Anything, user.ID).
 		Return(&models.ManualBlockCollection{}, nil)
 	mockPatron.On("GetAutomatedPatronBlocks", mock.Anything, mock.Anything, user.ID).
 		Return(&models.AutomatedPatronBlock{}, nil)
-	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID, 0).
 		Return(&models.RequestCollection{}, nil)
 	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID, mock.Anything).
 		Return(loans, nil)
-	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID, 0).
 		Return(&models.RequestCollection{}, nil)
-	mockInv.On("GetItemByID", mock.Anything, mock.Anything, "item-aaa").Return(item, nil)
-	mockInv.On("GetItemByID", mock.Anything, mock.Anything, "item-bbb").Return(item, nil)
+	// No GetItemByID expectations: with the default summary (includeCharged and
+	// includeOverdue both false), attachItemDetails must not be called. Any
+	// unexpected call to mockInv panics, failing this test loudly.
 	mockFees.On("GetOpenAccountsExcludingSuspended", mock.Anything, mock.Anything, user.ID).
 		Return(&models.AccountCollection{}, nil)
 
@@ -125,6 +137,64 @@ func TestPatronInformationHandle_ValidPatron_WithLoans(t *testing.T) {
 	mockFees.AssertExpectations(t)
 }
 
+// TestPatronInformationHandle_ValidPatron_ChargedItemDetails verifies that when
+// the summary field requests charged items (position 2 = Y), attachItemDetails
+// is called for every open loan and the resulting item barcodes appear as AU
+// fields, while the charged-items count remains 0002.
+func TestPatronInformationHandle_ValidPatron_ChargedItemDetails(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	sess := testutil.NewAuthSession(tc)
+	user := makeTestUser()
+
+	mockPatron := &MockPatronClient{}
+	mockCirc := &MockCirculationClient{}
+	mockInv := &MockInventoryClient{}
+	mockFees := &MockFeesClient{}
+
+	futureDue := time.Now().Add(7 * 24 * time.Hour)
+	loans := &models.LoanCollection{
+		Loans: []models.Loan{
+			{ID: "loan-1", ItemID: "item-aaa", DueDate: &futureDue},
+			{ID: "loan-2", ItemID: "item-bbb", DueDate: &futureDue},
+		},
+	}
+	itemA := &models.Item{ID: "item-aaa", Barcode: "ITEM-AAA-BARCODE"}
+	itemB := &models.Item{ID: "item-bbb", Barcode: "ITEM-BBB-BARCODE"}
+
+	mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
+	mockPatron.On("GetManualBlocks", mock.Anything, mock.Anything, user.ID).
+		Return(&models.ManualBlockCollection{}, nil)
+	mockPatron.On("GetAutomatedPatronBlocks", mock.Anything, mock.Anything, user.ID).
+		Return(&models.AutomatedPatronBlock{}, nil)
+	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID, 0).
+		Return(&models.RequestCollection{}, nil)
+	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID, mock.Anything).
+		Return(loans, nil)
+	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID, 0).
+		Return(&models.RequestCollection{}, nil)
+	mockInv.On("GetItemByID", mock.Anything, mock.Anything, "item-aaa").Return(itemA, nil)
+	mockInv.On("GetItemByID", mock.Anything, mock.Anything, "item-bbb").Return(itemB, nil)
+	mockFees.On("GetOpenAccountsExcludingSuspended", mock.Anything, mock.Anything, user.ID).
+		Return(&models.AccountCollection{}, nil)
+
+	h := NewPatronInformationHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, mockPatron, mockCirc, mockInv, mockFees)
+
+	// Position 2 (Y) = include charged items (AU)
+	resp, err := h.Handle(context.Background(), patronInfoMsgWithSummary(user.Barcode, "  Y       "), sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "64"))
+	assert.Contains(t, resp, "0002", "charged items count must be 2")
+	assert.Contains(t, resp, "|AUITEM-AAA-BARCODE")
+	assert.Contains(t, resp, "|AUITEM-BBB-BARCODE")
+
+	mockPatron.AssertExpectations(t)
+	mockCirc.AssertExpectations(t)
+	mockInv.AssertExpectations(t)
+	mockFees.AssertExpectations(t)
+}
+
 // TestPatronInformationHandle_ValidPatron_WithHolds verifies that 1 available hold
 // results in a hold-items count of 0001 in the fixed-length section.
 func TestPatronInformationHandle_ValidPatron_WithHolds(t *testing.T) {
@@ -137,6 +207,7 @@ func TestPatronInformationHandle_ValidPatron_WithHolds(t *testing.T) {
 	mockFees := &MockFeesClient{}
 
 	holds := &models.RequestCollection{
+		TotalRecords: 1,
 		Requests: []models.Request{
 			{ID: "req-1", RequestType: "Hold", Status: "Open - Awaiting pickup"},
 		},
@@ -147,11 +218,11 @@ func TestPatronInformationHandle_ValidPatron_WithHolds(t *testing.T) {
 		Return(&models.ManualBlockCollection{}, nil)
 	mockPatron.On("GetAutomatedPatronBlocks", mock.Anything, mock.Anything, user.ID).
 		Return(&models.AutomatedPatronBlock{}, nil)
-	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID, 0).
 		Return(holds, nil)
 	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID, mock.Anything).
 		Return(&models.LoanCollection{}, nil)
-	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID, 0).
 		Return(&models.RequestCollection{}, nil)
 	mockFees.On("GetOpenAccountsExcludingSuspended", mock.Anything, mock.Anything, user.ID).
 		Return(&models.AccountCollection{}, nil)
@@ -166,6 +237,57 @@ func TestPatronInformationHandle_ValidPatron_WithHolds(t *testing.T) {
 	assert.Contains(t, resp, "|BLY")
 	// Fixed field: hold_items_count = "0001"
 	assert.Contains(t, resp, "0001", "hold items count must be 1")
+
+	mockPatron.AssertExpectations(t)
+	mockCirc.AssertExpectations(t)
+	mockFees.AssertExpectations(t)
+}
+
+// TestPatronInformationHandle_ValidPatron_HoldsItemized verifies that when the
+// summary field requests hold items (position 0 = Y), GetAvailableHolds is
+// called with the full PatronItemsLimit (not 0) and the resulting hold item
+// barcode appears as an AS field.
+func TestPatronInformationHandle_ValidPatron_HoldsItemized(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	sess := testutil.NewAuthSession(tc)
+	user := makeTestUser()
+
+	mockPatron := &MockPatronClient{}
+	mockCirc := &MockCirculationClient{}
+	mockFees := &MockFeesClient{}
+
+	holds := &models.RequestCollection{
+		TotalRecords: 1,
+		Requests: []models.Request{
+			{ID: "req-1", RequestType: "Hold", Status: "Open - Awaiting pickup", Item: &models.RequestItem{Barcode: "HOLD-ITEM-BARCODE"}},
+		},
+	}
+
+	mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
+	mockPatron.On("GetManualBlocks", mock.Anything, mock.Anything, user.ID).
+		Return(&models.ManualBlockCollection{}, nil)
+	mockPatron.On("GetAutomatedPatronBlocks", mock.Anything, mock.Anything, user.ID).
+		Return(&models.AutomatedPatronBlock{}, nil)
+	// includeHolds=true -> fetched with the full PatronItemsLimit, not limit=0
+	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID, config.OKAPIUnlimitedLimit).
+		Return(holds, nil)
+	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID, mock.Anything).
+		Return(&models.LoanCollection{}, nil)
+	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID, 0).
+		Return(&models.RequestCollection{}, nil)
+	mockFees.On("GetOpenAccountsExcludingSuspended", mock.Anything, mock.Anything, user.ID).
+		Return(&models.AccountCollection{}, nil)
+
+	h := NewPatronInformationHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, mockPatron, mockCirc, nil, mockFees)
+
+	// Position 0 (Y) = include hold items (AS)
+	resp, err := h.Handle(context.Background(), patronInfoMsgWithSummary(user.Barcode, "Y         "), sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "64"))
+	assert.Contains(t, resp, "0001", "hold items count must be 1")
+	assert.Contains(t, resp, "|ASHOLD-ITEM-BARCODE")
 
 	mockPatron.AssertExpectations(t)
 	mockCirc.AssertExpectations(t)
@@ -194,11 +316,11 @@ func TestPatronInformationHandle_ValidPatron_WithFees(t *testing.T) {
 		Return(&models.ManualBlockCollection{}, nil)
 	mockPatron.On("GetAutomatedPatronBlocks", mock.Anything, mock.Anything, user.ID).
 		Return(&models.AutomatedPatronBlock{}, nil)
-	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetAvailableHolds", mock.Anything, mock.Anything, user.ID, 0).
 		Return(&models.RequestCollection{}, nil)
 	mockCirc.On("GetOpenLoansByUser", mock.Anything, mock.Anything, user.ID, mock.Anything).
 		Return(&models.LoanCollection{}, nil)
-	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID).
+	mockCirc.On("GetUnavailableHolds", mock.Anything, mock.Anything, user.ID, 0).
 		Return(&models.RequestCollection{}, nil)
 	mockFees.On("GetOpenAccountsExcludingSuspended", mock.Anything, mock.Anything, user.ID).
 		Return(accounts, nil)

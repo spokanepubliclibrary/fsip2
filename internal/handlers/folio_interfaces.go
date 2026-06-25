@@ -30,8 +30,8 @@ type CirculationLookup interface {
 	GetLoansByUser(ctx context.Context, token, userID string) (*models.LoanCollection, error)
 	GetOpenLoansByUser(ctx context.Context, token, userID string, limit int) (*models.LoanCollection, error)
 	GetOpenRequestsByUser(ctx context.Context, token, userID string) (*models.RequestCollection, error)
-	GetAvailableHolds(ctx context.Context, token, userID string) (*models.RequestCollection, error)
-	GetUnavailableHolds(ctx context.Context, token, userID string) (*models.RequestCollection, error)
+	GetAvailableHolds(ctx context.Context, token, userID string, limit int) (*models.RequestCollection, error)
+	GetUnavailableHolds(ctx context.Context, token, userID string, limit int) (*models.RequestCollection, error)
 	GetLoansByItem(ctx context.Context, token, itemID string) (*models.LoanCollection, error)
 	GetRequestsByItem(ctx context.Context, token, itemID string) (*models.RequestCollection, error)
 }
