@@ -174,10 +174,12 @@ func (cc *CirculationClient) GetOpenRequestsByUser(ctx context.Context, token st
 	return &requests, nil
 }
 
-// GetAvailableHolds retrieves requests that are ready for pickup for a user
-func (cc *CirculationClient) GetAvailableHolds(ctx context.Context, token string, userID string) (*models.RequestCollection, error) {
+// GetAvailableHolds retrieves requests that are ready for pickup for a user.
+// A limit of 0 fetches no request records and returns only TotalRecords, for an
+// efficient count-only query when itemized hold details are not needed.
+func (cc *CirculationClient) GetAvailableHolds(ctx context.Context, token string, userID string, limit int) (*models.RequestCollection, error) {
 	query := fmt.Sprintf(`requesterId=="%s" and status=="Open - Awaiting pickup"`, userID)
-	path := fmt.Sprintf("/circulation/requests?query=%s", url.QueryEscape(query))
+	path := fmt.Sprintf("/circulation/requests?limit=%d&query=%s", limit, url.QueryEscape(query))
 
 	var requests models.RequestCollection
 	err := cc.client.Get(ctx, path, token, &requests)
@@ -188,10 +190,12 @@ func (cc *CirculationClient) GetAvailableHolds(ctx context.Context, token string
 	return &requests, nil
 }
 
-// GetUnavailableHolds retrieves requests that are not yet filled or in transit for a user
-func (cc *CirculationClient) GetUnavailableHolds(ctx context.Context, token string, userID string) (*models.RequestCollection, error) {
+// GetUnavailableHolds retrieves requests that are not yet filled or in transit for a user.
+// A limit of 0 fetches no request records and returns only TotalRecords, for an
+// efficient count-only query when itemized hold details are not needed.
+func (cc *CirculationClient) GetUnavailableHolds(ctx context.Context, token string, userID string, limit int) (*models.RequestCollection, error) {
 	query := fmt.Sprintf(`requesterId=="%s" and (status=="Open - Not yet filled" or status=="Open - In transit")`, userID)
-	path := fmt.Sprintf("/circulation/requests?limit=1000&query=%s", url.QueryEscape(query))
+	path := fmt.Sprintf("/circulation/requests?limit=%d&query=%s", limit, url.QueryEscape(query))
 
 	var requests models.RequestCollection
 	err := cc.client.Get(ctx, path, token, &requests)

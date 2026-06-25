@@ -132,16 +132,16 @@ func (m *MockCirculationClient) GetOpenRequestsByUser(ctx context.Context, token
 	return args.Get(0).(*models.RequestCollection), args.Error(1)
 }
 
-func (m *MockCirculationClient) GetAvailableHolds(ctx context.Context, token, userID string) (*models.RequestCollection, error) {
-	args := m.Called(ctx, token, userID)
+func (m *MockCirculationClient) GetAvailableHolds(ctx context.Context, token, userID string, limit int) (*models.RequestCollection, error) {
+	args := m.Called(ctx, token, userID, limit)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*models.RequestCollection), args.Error(1)
 }
 
-func (m *MockCirculationClient) GetUnavailableHolds(ctx context.Context, token, userID string) (*models.RequestCollection, error) {
-	args := m.Called(ctx, token, userID)
+func (m *MockCirculationClient) GetUnavailableHolds(ctx context.Context, token, userID string, limit int) (*models.RequestCollection, error) {
+	args := m.Called(ctx, token, userID, limit)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

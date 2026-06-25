@@ -175,6 +175,11 @@ func (h *PatronInformationHandler) Handle(ctx context.Context, msg *parser.Messa
 	includeFines := len(summary) > 3 && summary[3] == 'Y'
 	includeUnavailableHolds := len(summary) > 5 && summary[5] == 'Y'
 
+	// NOTE: buildPatronInformationResponse recomputes includeHolds/
+	// includeUnavailableHolds from this same summary string to gate the AS/CD
+	// itemization loops. The nil-placeholder entries in holds/unavailableHolds
+	// below are only safe because both copies stay identical - keep them in sync.
+
 	h.logger.Debug("Parsed summary flags",
 		zap.String("summary_raw", summary),
 		zap.Int("summary_length", len(summary)),
@@ -195,24 +200,47 @@ func (h *PatronInformationHandler) Handle(ctx context.Context, msg *parser.Messa
 	// 37-60) must ALWAYS reflect actual totals on the patron account, regardless
 	// of what the summary field requests. The summary field only controls whether
 	// item details (barcodes) appear in variable fields (AS, AT, AU, AV, CD).
+	//
+	// Collections whose itemized details are NOT requested are fetched with
+	// limit=0, which returns no records but still reports an accurate
+	// TotalRecords - avoiding the cost of fetching (and for loans, resolving
+	// item details for) data the response won't use. See attachItemDetails.
 	// ============================================================================
 
-	// ALWAYS fetch patron's holds for accurate counts (available holds - ready for pickup)
+	// Holds (available - ready for pickup). Fetch full records only if AS (hold
+	// item barcodes) is requested; otherwise fetch only the total count.
 	var holds []*models.Request
-	availableHolds, err := circulationClient.GetAvailableHolds(ctx, token, user.ID)
-	if err != nil {
-		h.logger.Warn("Failed to get available holds",
-			zap.String("patron_id", user.ID),
-			zap.Error(err),
-		)
+	if includeHolds {
+		availableHolds, err := circulationClient.GetAvailableHolds(ctx, token, user.ID, session.TenantConfig.GetPatronItemsLimit())
+		if err != nil {
+			h.logger.Warn("Failed to get available holds",
+				zap.String("patron_id", user.ID),
+				zap.Error(err),
+			)
+		} else {
+			for i := range availableHolds.Requests {
+				holds = append(holds, &availableHolds.Requests[i])
+			}
+		}
 	} else {
-		// Convert to slice of pointers for easier handling
-		for i := range availableHolds.Requests {
-			holds = append(holds, &availableHolds.Requests[i])
+		availableHolds, err := circulationClient.GetAvailableHolds(ctx, token, user.ID, 0)
+		if err != nil {
+			h.logger.Warn("Failed to get available holds count",
+				zap.String("patron_id", user.ID),
+				zap.Error(err),
+			)
+		} else {
+			// Placeholder entries so len(holds) reflects TotalRecords for the count
+			// field below. Safe: the AS itemization loop only runs when includeHolds
+			// is true, so these nil entries are never dereferenced.
+			holds = make([]*models.Request, availableHolds.TotalRecords)
 		}
 	}
 
-	// ALWAYS fetch patron's loans for accurate counts
+	// Loans (open / charged items + overdue). Always fetched in full: the counts
+	// require iterating every open loan to evaluate IsOverdue(), and
+	// PatronItemsLimit already bounds the result set. Item details (barcodes for
+	// AT/AU) are fetched only for the subset of loans the response will itemize.
 	var loans []*models.Loan
 	var overdueLoans []*models.Loan
 	loansCollection, err := circulationClient.GetOpenLoansByUser(ctx, token, user.ID, session.TenantConfig.GetPatronItemsLimit())
@@ -222,31 +250,19 @@ func (h *PatronInformationHandler) Handle(ctx context.Context, msg *parser.Messa
 			zap.Error(err),
 		)
 	} else {
-		// Get item details for each loan
 		for i := range loansCollection.Loans {
 			loan := &loansCollection.Loans[i]
-
-			// Fetch item details to get barcode
-			item, err := inventoryClient.GetItemByID(ctx, token, loan.ItemID)
-			if err != nil {
-				h.logger.Warn("Failed to get item for loan",
-					zap.String("loan_id", loan.ID),
-					zap.String("item_id", loan.ItemID),
-					zap.Error(err),
-				)
-				continue
-			}
-
-			// Attach item to loan
-			loan.Item = item
-
-			// Always add to all loans for count
 			loans = append(loans, loan)
-
-			// Always separate overdue loans for count
 			if loan.IsOverdue() {
 				overdueLoans = append(overdueLoans, loan)
 			}
+		}
+
+		switch {
+		case includeCharged:
+			h.attachItemDetails(ctx, token, loans, inventoryClient)
+		case includeOverdue:
+			h.attachItemDetails(ctx, token, overdueLoans, inventoryClient)
 		}
 	}
 
@@ -266,18 +282,34 @@ func (h *PatronInformationHandler) Handle(ctx context.Context, msg *parser.Messa
 		}
 	}
 
-	// ALWAYS fetch patron's unavailable holds for accurate counts (holds not yet filled or in transit)
+	// Unavailable holds (not yet filled or in transit). Fetch full records only if
+	// CD (unavailable hold items) is requested; otherwise fetch only the total count.
 	var unavailableHolds []*models.Request
-	unavailableHoldsCollection, err := circulationClient.GetUnavailableHolds(ctx, token, user.ID)
-	if err != nil {
-		h.logger.Warn("Failed to get unavailable holds",
-			zap.String("patron_id", user.ID),
-			zap.Error(err),
-		)
+	if includeUnavailableHolds {
+		unavailableHoldsCollection, err := circulationClient.GetUnavailableHolds(ctx, token, user.ID, session.TenantConfig.GetPatronItemsLimit())
+		if err != nil {
+			h.logger.Warn("Failed to get unavailable holds",
+				zap.String("patron_id", user.ID),
+				zap.Error(err),
+			)
+		} else {
+			for i := range unavailableHoldsCollection.Requests {
+				unavailableHolds = append(unavailableHolds, &unavailableHoldsCollection.Requests[i])
+			}
+		}
 	} else {
-		// Convert to slice of pointers for easier handling
-		for i := range unavailableHoldsCollection.Requests {
-			unavailableHolds = append(unavailableHolds, &unavailableHoldsCollection.Requests[i])
+		unavailableHoldsCollection, err := circulationClient.GetUnavailableHolds(ctx, token, user.ID, 0)
+		if err != nil {
+			h.logger.Warn("Failed to get unavailable holds count",
+				zap.String("patron_id", user.ID),
+				zap.Error(err),
+			)
+		} else {
+			// Placeholder entries so len(unavailableHolds) reflects TotalRecords for
+			// the count field below. Safe: the CD itemization loop only runs when
+			// includeUnavailableHolds is true, so these nil entries are never
+			// dereferenced.
+			unavailableHolds = make([]*models.Request, unavailableHoldsCollection.TotalRecords)
 		}
 	}
 
@@ -326,6 +358,24 @@ func (h *PatronInformationHandler) Handle(ctx context.Context, msg *parser.Messa
 	h.logResponse(string(parser.PatronInformationResponse), session, nil)
 
 	return h.buildPatronInformationResponse(user, manualBlocks, automatedBlocks, holds, loans, overdueLoans, accounts, unavailableHolds, patronGroup, institutionID, patronIdentifier, language, summary, true, pinVerified, msg.SequenceNumber, session), nil
+}
+
+// attachItemDetails populates loan.Item via an inventory lookup for each loan in loans.
+// This is the only per-item FOLIO call in the patron information flow, so callers
+// should pass only the loans whose item barcodes are actually needed (AT/AU fields).
+func (h *PatronInformationHandler) attachItemDetails(ctx context.Context, token string, loans []*models.Loan, inventoryClient InventoryLookup) {
+	for _, loan := range loans {
+		item, err := inventoryClient.GetItemByID(ctx, token, loan.ItemID)
+		if err != nil {
+			h.logger.Warn("Failed to get item for loan",
+				zap.String("loan_id", loan.ID),
+				zap.String("item_id", loan.ItemID),
+				zap.Error(err),
+			)
+			continue
+		}
+		loan.Item = item
+	}
 }
 
 // buildPatronInformationResponse builds a Patron Information Response (64)
@@ -413,6 +463,10 @@ func (h *PatronInformationHandler) buildPatronInformationResponse(
 	// Position 3: fine items (Y/N)
 	// Position 4: recall items (Y/N)
 	// Position 5: unavailable hold items (Y/N)
+	//
+	// NOTE: must match the flag computation in Handle(), which uses these same
+	// flags to decide whether holds/unavailableHolds contain real records or
+	// nil placeholders (see comments there).
 	includeHolds := len(summary) > 0 && summary[0] == 'Y'
 	includeOverdue := len(summary) > 1 && summary[1] == 'Y'
 	includeCharged := len(summary) > 2 && summary[2] == 'Y'

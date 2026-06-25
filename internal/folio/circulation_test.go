@@ -349,7 +349,7 @@ func TestGetAvailableHolds_Success(t *testing.T) {
 	client := NewCirculationClient(server.URL, "test-tenant")
 	ctx := context.Background()
 
-	holds, err := client.GetAvailableHolds(ctx, "test-token", "user-123")
+	holds, err := client.GetAvailableHolds(ctx, "test-token", "user-123", 2147483647)
 	if err != nil {
 		t.Fatalf("GetAvailableHolds failed: %v", err)
 	}
@@ -386,13 +386,83 @@ func TestGetUnavailableHolds_Success(t *testing.T) {
 	client := NewCirculationClient(server.URL, "test-tenant")
 	ctx := context.Background()
 
-	holds, err := client.GetUnavailableHolds(ctx, "test-token", "user-123")
+	holds, err := client.GetUnavailableHolds(ctx, "test-token", "user-123", 1000)
 	if err != nil {
 		t.Fatalf("GetUnavailableHolds failed: %v", err)
 	}
 
 	if holds.TotalRecords != 2 {
 		t.Errorf("Expected 2 unavailable holds, got %d", holds.TotalRecords)
+	}
+}
+
+func TestGetAvailableHolds_CountOnly(t *testing.T) {
+	// Create mock server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("limit"); got != "0" {
+			t.Errorf("Expected limit=0, got: %s", got)
+		}
+
+		// FOLIO/RMB count-only convention: limit=0 returns an accurate
+		// TotalRecords with no request records.
+		collection := models.RequestCollection{
+			Requests:     []models.Request{},
+			TotalRecords: 5,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(collection)
+	}))
+	defer server.Close()
+
+	client := NewCirculationClient(server.URL, "test-tenant")
+	ctx := context.Background()
+
+	holds, err := client.GetAvailableHolds(ctx, "test-token", "user-123", 0)
+	if err != nil {
+		t.Fatalf("GetAvailableHolds failed: %v", err)
+	}
+
+	if holds.TotalRecords != 5 {
+		t.Errorf("Expected TotalRecords 5, got %d", holds.TotalRecords)
+	}
+
+	if len(holds.Requests) != 0 {
+		t.Errorf("Expected no request records, got %d", len(holds.Requests))
+	}
+}
+
+func TestGetUnavailableHolds_CountOnly(t *testing.T) {
+	// Create mock server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("limit"); got != "0" {
+			t.Errorf("Expected limit=0, got: %s", got)
+		}
+
+		// FOLIO/RMB count-only convention: limit=0 returns an accurate
+		// TotalRecords with no request records.
+		collection := models.RequestCollection{
+			Requests:     []models.Request{},
+			TotalRecords: 3,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(collection)
+	}))
+	defer server.Close()
+
+	client := NewCirculationClient(server.URL, "test-tenant")
+	ctx := context.Background()
+
+	holds, err := client.GetUnavailableHolds(ctx, "test-token", "user-123", 0)
+	if err != nil {
+		t.Fatalf("GetUnavailableHolds failed: %v", err)
+	}
+
+	if holds.TotalRecords != 3 {
+		t.Errorf("Expected TotalRecords 3, got %d", holds.TotalRecords)
+	}
+
+	if len(holds.Requests) != 0 {
+		t.Errorf("Expected no request records, got %d", len(holds.Requests))
 	}
 }
 

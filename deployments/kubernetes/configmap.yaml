@@ -239,9 +239,13 @@ data:
         # to prevent performance issues with large patron loan counts
         renewAllMaxItems: 50
 
-        # Maximum items to include in the AU (charged items) repeatable field of a 64 (Patron Information) response.
-        # 0 or absent = no limit (fetches all open loans from FOLIO, which is the correct SIP2 behavior).
-        # Set to a positive integer only if you need to artificially cap the number of AU fields returned.
+        # Maximum items to fetch/include for the itemized repeatable fields of a 64 (Patron
+        # Information) response: AU (charged items), AT (overdue items), AS (hold items),
+        # and CD (unavailable hold items). Each is only fetched/itemized when the
+        # corresponding summary flag is requested; the fixed-field counts always reflect
+        # the true totals regardless of this limit.
+        # 0 or absent = no limit (fetches all records from FOLIO, which is the correct SIP2 behavior).
+        # Set to a positive integer only if you need to artificially cap the number of items returned.
         patronItemsLimit: 0
 
         # Rolling renewal settings (for message 23 or 63 - Patron Status and Patron Information)
