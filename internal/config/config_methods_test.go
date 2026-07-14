@@ -36,7 +36,62 @@ func TestTenantConfig_IsMessageSupported(t *testing.T) {
 	}
 }
 
-// TestTenantConfig_GetMessageDelimiterBytes tests the GetMessageDelimiterBytes method
+// TestUnescapeDelimiter tests the UnescapeDelimiter helper function
+func TestUnescapeDelimiter(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     `"\\r" converts to actual CR`,
+			input:    "\\r",
+			expected: "\r",
+		},
+		{
+			name:     `"\\n" converts to actual LF`,
+			input:    "\\n",
+			expected: "\n",
+		},
+		{
+			name:     `"\\r\\n" converts to actual CRLF`,
+			input:    "\\r\\n",
+			expected: "\r\n",
+		},
+		{
+			name:     "actual CR passes through unchanged",
+			input:    "\r",
+			expected: "\r",
+		},
+		{
+			name:     "actual LF passes through unchanged",
+			input:    "\n",
+			expected: "\n",
+		},
+		{
+			name:     "pipe passes through unchanged",
+			input:    "|",
+			expected: "|",
+		},
+		{
+			name:     "empty string passes through unchanged",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := UnescapeDelimiter(tt.input)
+			if result != tt.expected {
+				t.Errorf("UnescapeDelimiter(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestTenantConfig_GetMessageDelimiterBytes tests the GetMessageDelimiterBytes method.
+// MessageDelimiter is normalized at load time, so the struct always holds actual bytes.
 func TestTenantConfig_GetMessageDelimiterBytes(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -44,27 +99,27 @@ func TestTenantConfig_GetMessageDelimiterBytes(t *testing.T) {
 		expected  []byte
 	}{
 		{
-			name:      "CR delimiter escaped",
-			delimiter: "\\r",
+			name:      "actual CR delimiter",
+			delimiter: "\r",
 			expected:  []byte{'\r'},
 		},
 		{
-			name:      "CRLF delimiter escaped",
-			delimiter: "\\r\\n",
+			name:      "actual CRLF delimiter",
+			delimiter: "\r\n",
 			expected:  []byte{'\r', '\n'},
 		},
 		{
-			name:      "LF delimiter escaped",
-			delimiter: "\\n",
+			name:      "actual LF delimiter",
+			delimiter: "\n",
 			expected:  []byte{'\n'},
 		},
 		{
-			name:      "Empty delimiter returns empty",
+			name:      "empty delimiter returns empty",
 			delimiter: "",
 			expected:  []byte{},
 		},
 		{
-			name:      "Custom delimiter",
+			name:      "pipe delimiter",
 			delimiter: "|",
 			expected:  []byte{'|'},
 		},

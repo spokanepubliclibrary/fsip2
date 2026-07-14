@@ -336,6 +336,40 @@ func TestLoadTenantConfigs_MultiSource_MultiTenantFiles(t *testing.T) {
 	}
 }
 
+func TestConfigLoad_DelimiterNormalization(t *testing.T) {
+	dir := t.TempDir()
+	tenantFile := filepath.Join(dir, "tenant.yaml")
+	// Unquoted \r in YAML is the two-character literal backslash-r, which must be
+	// normalized to an actual CR byte at load time.
+	tenantYAML := "tenants:\n  - tenant: norm-test\n    okapiUrl: http://localhost:9130\n    messageDelimiter: \\r\n"
+	if err := os.WriteFile(tenantFile, []byte(tenantYAML), 0644); err != nil {
+		t.Fatalf("failed to write tenant file: %v", err)
+	}
+
+	mainYAML := "port: 6443\nokapiUrl: http://okapi.example.com\nhealthCheckPort: 8081\ntokenCacheCapacity: 100\ntenantConfigSources:\n  - type: file\n    path: " + tenantFile + "\n"
+	mainFile := filepath.Join(dir, "main.yaml")
+	if err := os.WriteFile(mainFile, []byte(mainYAML), 0644); err != nil {
+		t.Fatalf("failed to write main config file: %v", err)
+	}
+
+	cfg, err := Load(mainFile)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	tc, ok := cfg.Tenants["norm-test"]
+	if !ok {
+		t.Fatal("expected 'norm-test' tenant to be loaded")
+	}
+
+	if tc.MessageDelimiter != "\r" {
+		t.Errorf("MessageDelimiter = %q (len %d), want actual CR (len 1)", tc.MessageDelimiter, len(tc.MessageDelimiter))
+	}
+	if len(tc.MessageDelimiter) != 1 {
+		t.Errorf("MessageDelimiter length = %d, want 1 (actual CR byte)", len(tc.MessageDelimiter))
+	}
+}
+
 func TestValidatePatronCustomFields_Nil(t *testing.T) {
 	tc := &TenantConfig{}
 	if err := tc.ValidatePatronCustomFields(); err != nil {

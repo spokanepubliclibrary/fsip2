@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -183,6 +184,11 @@ func (c *Connection) readMessage(reader *bufio.Reader) (string, error) {
 				return "", fmt.Errorf("message exceeded maximum size of %d bytes", maxSIP2MessageBytes)
 			}
 		}
+	}
+
+	// Strip stray CR when delimiter is LF-only (tolerates CRLF-sending clients)
+	if len(delimiter) == 1 && delimiter[0] == '\n' {
+		message = bytes.TrimRight(message, "\r")
 	}
 
 	receivedMsg := string(message)

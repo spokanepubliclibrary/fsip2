@@ -41,6 +41,7 @@ tenants:
     errorDetectionEnabled: true
 
     # Message terminator: \r (CR), \n (LF), \r\n (CRLF), or custom string
+    # Both double-quoted "\r" and unquoted \r are accepted; use double-quoted for clarity.
     messageDelimiter: "\r"
 
     # Field delimiter (usually | for standard SIP2)

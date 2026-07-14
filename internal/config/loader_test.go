@@ -90,9 +90,9 @@ tenants:
 		t.Fatalf("FileLoader.Load() failed: %v", err)
 	}
 
-	// applyTenantDefaults should fill these in
-	if cfgs[0].MessageDelimiter != "\\r" {
-		t.Errorf("Expected default MessageDelimiter '\\r', got %q", cfgs[0].MessageDelimiter)
+	// applyTenantDefaults should fill these in and normalize to actual bytes
+	if cfgs[0].MessageDelimiter != "\r" {
+		t.Errorf("Expected default MessageDelimiter actual CR byte, got %q", cfgs[0].MessageDelimiter)
 	}
 	if cfgs[0].FieldDelimiter != "|" {
 		t.Errorf("Expected default FieldDelimiter '|', got %q", cfgs[0].FieldDelimiter)
@@ -480,8 +480,8 @@ func TestApplyTenantDefaults(t *testing.T) {
 	tc := &TenantConfig{}
 	applyTenantDefaults(tc)
 
-	if tc.MessageDelimiter != "\\r" {
-		t.Errorf("Expected '\\r', got %q", tc.MessageDelimiter)
+	if tc.MessageDelimiter != "\r" {
+		t.Errorf("Expected actual CR byte, got %q", tc.MessageDelimiter)
 	}
 	if tc.FieldDelimiter != "|" {
 		t.Errorf("Expected '|', got %q", tc.FieldDelimiter)

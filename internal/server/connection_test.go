@@ -1043,6 +1043,39 @@ func TestReadMessage_MaxSizeGuard(t *testing.T) {
 	}
 }
 
+// TestReadMessage_CRLF_ToleranceWithLFDelimiter verifies that when the delimiter is
+// LF-only ("\n"), a client that sends CRLF ("\r\n") has the stray CR stripped so the
+// returned message contains no trailing carriage return.
+func TestReadMessage_CRLF_ToleranceWithLFDelimiter(t *testing.T) {
+	tenantConfig := &config.TenantConfig{
+		Tenant:           "test",
+		MessageDelimiter: "\n",
+	}
+
+	session := types.NewSession("test-session", tenantConfig)
+	mc := newMockConn("msg\r\n")
+
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.Config{OkapiURL: "https://folio.example.com"}
+	server, _ := NewServer(cfg, logger)
+	tenantService := tenant.NewService(cfg)
+
+	conn := NewConnection(
+		mc,
+		session,
+		tenantService,
+		make(map[parser.MessageCode]MessageHandler),
+		server,
+		6443,
+		"127.0.0.1",
+	)
+
+	reader := bufio.NewReader(mc.readBuf)
+	message, err := conn.readMessage(reader)
+	assert.NoError(t, err)
+	assert.Equal(t, "msg", message, "trailing CR should be stripped when delimiter is LF-only")
+}
+
 // TestHandleLoginTenantResolution_UsernamePrefix — CN field (LoginUserID) drives tenant
 // resolution via UsernamePrefixes. The AA field (PatronIdentifier) is intentionally absent
 // so the test fails if the implementation reads PatronIdentifier instead of LoginUserID.
@@ -1089,4 +1122,160 @@ func TestHandleLoginTenantResolution_UsernamePrefix(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "lib4", conn.session.TenantConfig.Tenant,
 		"tenant should be resolved to 'lib4' via LoginUserID prefix, not 'default'")
+}
+
+// TestHandle_FullSIPSequence_AllDelimiters verifies that the delimiter fix applied in
+// Stage 1 works end-to-end for CR, LF, and CRLF delimiters. Each subtest runs a real
+// three-message exchange (SC Status → Login → Patron Info) over a net.Pipe() connection
+// and asserts that every response arrives with the correct message-code prefix and
+// delimiter suffix — without freezing.
+func TestHandle_FullSIPSequence_AllDelimiters(t *testing.T) {
+	// patronInfoDate is an 18-char SIP2 timestamp used in the Patron Info fixed fields.
+	// The exact value does not matter for the test — we just need the fixed-field block
+	// to be the right length (3 language + 18 date + 10 summary = 31 chars).
+	const patronInfoDate = "20240101    120000"
+	const patronInfoSummary = "          " // 10 spaces
+
+	// SIP2 messages sent by the client (fixed fields only, no delimiter yet).
+	// SC Status: 99 + status(1) + max_print_width(3) + protocol_version(4)
+	scStatusMsg := "9900302.00"
+	// Login: 93 + uid_algo(1) + pwd_algo(1) + CNsipuser + COsippass
+	loginMsg := "9300CNsipuser|COsippass|"
+	// Patron Info: 63 + language(3) + date(18) + summary(10) + AApatron
+	patronInfoMsg := "63000" + patronInfoDate + patronInfoSummary + "|AApatron123|AOtest|"
+
+	cases := []struct {
+		name      string
+		delimiter string
+	}{
+		{"CR", "\r"},
+		{"LF", "\n"},
+		{"CRLF", "\r\n"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			delim := tc.delimiter
+
+			// Build a TenantConfig that supports the three message types under test.
+			tenantCfg := &config.TenantConfig{
+				Tenant:           "test-tenant",
+				MessageDelimiter: delim,
+				FieldDelimiter:   "|",
+				Charset:          "UTF-8",
+				SupportedMessages: []config.MessageSupport{
+					{Code: "99", Enabled: true}, // SC Status
+					{Code: "93", Enabled: true}, // Login
+					{Code: "63", Enabled: true}, // Patron Information
+				},
+			}
+
+			// Mock handlers return minimal valid SIP2 response bodies.
+			// The Connection.sendMessage wrapper appends the delimiter, so handlers
+			// must NOT include one.
+			handlers := map[parser.MessageCode]MessageHandler{
+				parser.SCStatus: &mockHandlerFunc{fn: func(ctx context.Context, msg *parser.Message, s *types.Session) (string, error) {
+					return "98YNNN030003" + patronInfoDate + "2.00|AOtest|AMTest Library|BXYYYYYYYYYYYYYYYYYY", nil
+				}},
+				parser.LoginRequest: &mockHandlerFunc{fn: func(ctx context.Context, msg *parser.Message, s *types.Session) (string, error) {
+					return "94100", nil
+				}},
+				parser.PatronInformationRequest: &mockHandlerFunc{fn: func(ctx context.Context, msg *parser.Message, s *types.Session) (string, error) {
+					return "64              00020240101    120000|AOtest|AApatron123|AETest Patron", nil
+				}},
+			}
+
+			// net.Pipe() gives us a synchronous, in-process bidirectional pipe —
+			// no TCP, no OS resources.
+			serverConn, clientConn := net.Pipe()
+
+			sess := types.NewSession("test-session", tenantCfg)
+			logger := zap.NewNop()
+			cfg := &config.Config{Tenants: map[string]*config.TenantConfig{tenantCfg.Tenant: tenantCfg}}
+			srv, _ := NewServer(cfg, logger)
+			ts := tenant.NewService(cfg)
+			conn := NewConnection(serverConn, sess, ts, handlers, srv, 6443, "127.0.0.1")
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			serverErr := make(chan error, 1)
+			go func() {
+				serverErr <- conn.Handle(ctx)
+			}()
+
+			// readResponse reads from clientConn until delimiter, with a 2 s deadline.
+			readResponse := func(label string) string {
+				t.Helper()
+				clientConn.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+				reader := bufio.NewReader(clientConn)
+				delimBytes := []byte(delim)
+
+				var buf []byte
+				for {
+					b := make([]byte, 1)
+					_, err := reader.Read(b)
+					if err != nil {
+						t.Fatalf("[%s] %s: read error before delimiter: %v", tc.name, label, err)
+					}
+					buf = append(buf, b[0])
+					if len(buf) >= len(delimBytes) {
+						tail := buf[len(buf)-len(delimBytes):]
+						if string(tail) == delim {
+							// Strip the delimiter and return.
+							return string(buf[:len(buf)-len(delimBytes)])
+						}
+					}
+				}
+			}
+
+			// Helper: send a message from the client side.
+			sendMsg := func(body string) {
+				t.Helper()
+				clientConn.SetWriteDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+				_, err := clientConn.Write([]byte(body + delim))
+				if err != nil {
+					t.Fatalf("[%s] client write error: %v", tc.name, err)
+				}
+			}
+
+			// --- Step 1: SC Status (99) → expect ACS Status (98) ---
+			sendMsg(scStatusMsg)
+			resp98 := readResponse("ACS Status")
+			if !strings.HasPrefix(resp98, "98") {
+				t.Errorf("[%s] SC Status: expected response starting with '98', got: %.30q", tc.name, resp98)
+			}
+
+			// --- Step 2: Login (93) → expect Login Response (94) ---
+			sendMsg(loginMsg)
+			resp94 := readResponse("Login Response")
+			if !strings.HasPrefix(resp94, "94") {
+				t.Errorf("[%s] Login: expected response starting with '94', got: %.30q", tc.name, resp94)
+			}
+
+			// --- Step 3: Patron Info (63) → expect Patron Info Response (64) ---
+			sendMsg(patronInfoMsg)
+			resp64 := readResponse("Patron Info Response")
+			if !strings.HasPrefix(resp64, "64") {
+				t.Errorf("[%s] Patron Info: expected response starting with '64', got: %.30q", tc.name, resp64)
+			}
+
+			// Close the client side — server Handle() should return cleanly on EOF.
+			clientConn.Close()
+
+			select {
+			case err := <-serverErr:
+				// io.EOF (nil after our code converts it) is the only expected outcome.
+				if err != nil && !strings.Contains(err.Error(), "EOF") &&
+					!strings.Contains(err.Error(), "closed") &&
+					!strings.Contains(err.Error(), "pipe") {
+					t.Errorf("[%s] Handle() returned unexpected error: %v", tc.name, err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Errorf("[%s] Handle() did not return after client closed connection", tc.name)
+				cancel()
+			}
+		})
+	}
 }
