@@ -322,18 +322,26 @@ func (tc *TenantConfig) IsMessageSupported(code string) bool {
 	return false
 }
 
-// GetMessageDelimiterBytes returns the message delimiter as bytes
-func (tc *TenantConfig) GetMessageDelimiterBytes() []byte {
-	switch tc.MessageDelimiter {
+// UnescapeDelimiter converts common YAML-escaped delimiter representations
+// to their actual byte sequences.
+func UnescapeDelimiter(s string) string {
+	switch s {
 	case "\\r":
-		return []byte("\r")
+		return "\r"
 	case "\\n":
-		return []byte("\n")
+		return "\n"
 	case "\\r\\n":
-		return []byte("\r\n")
+		return "\r\n"
 	default:
-		return []byte(tc.MessageDelimiter)
+		return s
 	}
+}
+
+// GetMessageDelimiterBytes returns the message delimiter as bytes.
+// MessageDelimiter is normalized at load time by UnescapeDelimiter, so this
+// is a direct conversion.
+func (tc *TenantConfig) GetMessageDelimiterBytes() []byte {
+	return []byte(tc.MessageDelimiter)
 }
 
 // GetFieldDelimiterBytes returns the field delimiter as bytes

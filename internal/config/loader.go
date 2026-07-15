@@ -133,6 +133,8 @@ func applyTenantDefaults(tc *TenantConfig) {
 	if tc.MessageDelimiter == "" {
 		tc.MessageDelimiter = "\\r"
 	}
+	tc.MessageDelimiter = UnescapeDelimiter(tc.MessageDelimiter)
+	tc.FieldDelimiter = UnescapeDelimiter(tc.FieldDelimiter)
 	if tc.FieldDelimiter == "" {
 		tc.FieldDelimiter = "|"
 	}

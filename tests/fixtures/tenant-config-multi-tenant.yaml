@@ -5,6 +5,7 @@ tenants:
   - tenant: diku
     okapiUrl: https://okapi-diku.example.com
     okapiTenant: diku
+    messageDelimiter: "\r"
     institutionID: "DIKU Library"     # AO field in 98 response
     libraryName:   "DIKU Test Library" # AM field in 98 response
     supportedMessages:
@@ -17,6 +18,7 @@ tenants:
   - tenant: snapshot
     okapiUrl: https://okapi-snapshot.example.com
     okapiTenant: snapshot
+    messageDelimiter: "\r"
     # institutionID and libraryName omitted — both fall back to tenant value ("snapshot")
 
 scTenants:

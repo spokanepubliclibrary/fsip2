@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -159,6 +160,16 @@ func (c *Connection) readMessage(reader *bufio.Reader) (string, error) {
 		}
 
 		if n > 0 {
+			// Discard a stray leading LF (tolerates CRLF-sending clients whose previous
+			// message was read under a CR-first delimiter — e.g. "\r", or "\r\n" active
+			// before a mid-connection tenant switch — which matches on the '\r' and
+			// leaves the paired '\n' unread until this next call). Skipped when the
+			// delimiter itself starts with '\n', since there a leading LF is either the
+			// delimiter itself or genuinely can't be an orphaned pairing byte.
+			if len(message) == 0 && buf[0] == '\n' && (len(delimiter) == 0 || delimiter[0] != '\n') {
+				continue
+			}
+
 			// Append the byte to our message buffer
 			message = append(message, buf[0])
 
@@ -183,6 +194,11 @@ func (c *Connection) readMessage(reader *bufio.Reader) (string, error) {
 				return "", fmt.Errorf("message exceeded maximum size of %d bytes", maxSIP2MessageBytes)
 			}
 		}
+	}
+
+	// Strip stray CR when delimiter is LF-only (tolerates CRLF-sending clients)
+	if len(delimiter) == 1 && delimiter[0] == '\n' {
+		message = bytes.TrimRight(message, "\r")
 	}
 
 	receivedMsg := string(message)
