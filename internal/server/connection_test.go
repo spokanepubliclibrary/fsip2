@@ -1076,6 +1076,40 @@ func TestReadMessage_CRLF_ToleranceWithLFDelimiter(t *testing.T) {
 	assert.Equal(t, "msg", message, "trailing CR should be stripped when delimiter is LF-only")
 }
 
+// TestReadMessage_CRLF_ToleranceWithCRDelimiter verifies that when the delimiter is
+// CR-only ("\r"), a stray leading LF — left over from a previous CRLF-terminated message
+// whose '\r' satisfied the delimiter match before the paired '\n' was read — is discarded
+// instead of being treated as the first byte of the message.
+func TestReadMessage_CRLF_ToleranceWithCRDelimiter(t *testing.T) {
+	tenantConfig := &config.TenantConfig{
+		Tenant:           "test",
+		MessageDelimiter: "\r",
+	}
+
+	session := types.NewSession("test-session", tenantConfig)
+	mc := newMockConn("\nmsg\r")
+
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.Config{OkapiURL: "https://folio.example.com"}
+	server, _ := NewServer(cfg, logger)
+	tenantService := tenant.NewService(cfg)
+
+	conn := NewConnection(
+		mc,
+		session,
+		tenantService,
+		make(map[parser.MessageCode]MessageHandler),
+		server,
+		6443,
+		"127.0.0.1",
+	)
+
+	reader := bufio.NewReader(mc.readBuf)
+	message, err := conn.readMessage(reader)
+	assert.NoError(t, err)
+	assert.Equal(t, "msg", message, "leading stray LF should be discarded when delimiter is CR-only")
+}
+
 // TestHandleLoginTenantResolution_UsernamePrefix — CN field (LoginUserID) drives tenant
 // resolution via UsernamePrefixes. The AA field (PatronIdentifier) is intentionally absent
 // so the test fails if the implementation reads PatronIdentifier instead of LoginUserID.
@@ -1277,5 +1311,330 @@ func TestHandle_FullSIPSequence_AllDelimiters(t *testing.T) {
 				cancel()
 			}
 		})
+	}
+}
+
+// TestHandle_FullSIPSequence_CRDelimiterWithCRLFClient reproduces the bug where a server
+// configured for a CR-only delimiter ("\r") receives CRLF ("\r\n") terminated messages from
+// the client. Before the fix, the '\n' left over after each CR-delimited read was prepended
+// to the next message, corrupting its 2-character message code (e.g. "\n63" instead of "63")
+// and causing "invalid message code" validation failures on every message after the first.
+func TestHandle_FullSIPSequence_CRDelimiterWithCRLFClient(t *testing.T) {
+	const patronInfoDate = "20240101    120000"
+	const patronInfoSummary = "          " // 10 spaces
+
+	scStatusMsg := "9900302.00"
+	loginMsg := "9300CNsipuser|COsippass|"
+	patronInfoMsg := "63000" + patronInfoDate + patronInfoSummary + "|AApatron123|AOtest|"
+
+	// Server is configured for CR-only, but the client (mimicking a CRLF-sending kiosk)
+	// terminates every message with CRLF.
+	const serverDelim = "\r"
+	const clientDelim = "\r\n"
+
+	tenantCfg := &config.TenantConfig{
+		Tenant:           "test-tenant",
+		MessageDelimiter: serverDelim,
+		FieldDelimiter:   "|",
+		Charset:          "UTF-8",
+		SupportedMessages: []config.MessageSupport{
+			{Code: "99", Enabled: true}, // SC Status
+			{Code: "93", Enabled: true}, // Login
+			{Code: "63", Enabled: true}, // Patron Information
+		},
+	}
+
+	handlers := map[parser.MessageCode]MessageHandler{
+		parser.SCStatus: &mockHandlerFunc{fn: func(ctx context.Context, msg *parser.Message, s *types.Session) (string, error) {
+			return "98YNNN030003" + patronInfoDate + "2.00|AOtest|AMTest Library|BXYYYYYYYYYYYYYYYYYY", nil
+		}},
+		parser.LoginRequest: &mockHandlerFunc{fn: func(ctx context.Context, msg *parser.Message, s *types.Session) (string, error) {
+			return "94100", nil
+		}},
+		parser.PatronInformationRequest: &mockHandlerFunc{fn: func(ctx context.Context, msg *parser.Message, s *types.Session) (string, error) {
+			return "64              00020240101    120000|AOtest|AApatron123|AETest Patron", nil
+		}},
+	}
+
+	serverConn, clientConn := net.Pipe()
+
+	sess := types.NewSession("test-session", tenantCfg)
+	logger := zap.NewNop()
+	cfg := &config.Config{Tenants: map[string]*config.TenantConfig{tenantCfg.Tenant: tenantCfg}}
+	srv, _ := NewServer(cfg, logger)
+	ts := tenant.NewService(cfg)
+	conn := NewConnection(serverConn, sess, ts, handlers, srv, 6443, "127.0.0.1")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- conn.Handle(ctx)
+	}()
+
+	// readResponse reads from clientConn until the server's CR-only delimiter, with a
+	// 2 s deadline so a regression (freeze or silently dropped response) fails fast.
+	readResponse := func(label string) string {
+		t.Helper()
+		clientConn.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+		reader := bufio.NewReader(clientConn)
+		delimBytes := []byte(serverDelim)
+
+		var buf []byte
+		for {
+			b := make([]byte, 1)
+			_, err := reader.Read(b)
+			if err != nil {
+				t.Fatalf("%s: read error before delimiter: %v", label, err)
+			}
+			buf = append(buf, b[0])
+			if len(buf) >= len(delimBytes) {
+				tail := buf[len(buf)-len(delimBytes):]
+				if string(tail) == serverDelim {
+					return string(buf[:len(buf)-len(delimBytes)])
+				}
+			}
+		}
+	}
+
+	sendMsg := func(body string) {
+		t.Helper()
+		clientConn.SetWriteDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+		_, err := clientConn.Write([]byte(body + clientDelim))
+		if err != nil {
+			t.Fatalf("client write error: %v", err)
+		}
+	}
+
+	// --- Step 1: SC Status (99) → expect ACS Status (98) ---
+	sendMsg(scStatusMsg)
+	resp98 := readResponse("ACS Status")
+	if !strings.HasPrefix(resp98, "98") {
+		t.Errorf("SC Status: expected response starting with '98', got: %.30q", resp98)
+	}
+
+	// --- Step 2: Login (93) → expect Login Response (94) ---
+	// The stray '\n' left after the SC Status CR-delimiter match must be discarded here,
+	// not prepended to this message's code.
+	sendMsg(loginMsg)
+	resp94 := readResponse("Login Response")
+	if !strings.HasPrefix(resp94, "94") {
+		t.Errorf("Login: expected response starting with '94', got: %.30q", resp94)
+	}
+
+	// --- Step 3: Patron Info (63) → expect Patron Info Response (64) ---
+	// This is the message that failed before the fix: "\n63..." was read instead of "63...".
+	sendMsg(patronInfoMsg)
+	resp64 := readResponse("Patron Info Response")
+	if !strings.HasPrefix(resp64, "64") {
+		t.Errorf("Patron Info: expected response starting with '64', got: %.30q", resp64)
+	}
+
+	clientConn.Close()
+
+	select {
+	case err := <-serverErr:
+		if err != nil && !strings.Contains(err.Error(), "EOF") &&
+			!strings.Contains(err.Error(), "closed") &&
+			!strings.Contains(err.Error(), "pipe") {
+			t.Errorf("Handle() returned unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Errorf("Handle() did not return after client closed connection")
+		cancel()
+	}
+}
+
+// TestReadMessage_CRLF_ToleranceWithCRLFDelimiter_OrphanFromPriorCRRead verifies that a
+// stray leading LF is discarded even when the *current* call's delimiter is the 2-byte
+// "\r\n" — reproducing a mid-connection tenant switch where the *previous* message was
+// read under a CR-only delimiter (leaving the paired '\n' unconsumed) and the delimiter
+// then changed to "\r\n" before the next readMessage() call. The original fix only checked
+// for a single-byte CR delimiter on the current read, which missed this case.
+func TestReadMessage_CRLF_ToleranceWithCRLFDelimiter_OrphanFromPriorCRRead(t *testing.T) {
+	tenantConfig := &config.TenantConfig{
+		Tenant:           "test",
+		MessageDelimiter: "\r\n",
+	}
+
+	session := types.NewSession("test-session", tenantConfig)
+	// Orphaned '\n' (left over from a prior CR-only-delimited read) followed by a
+	// properly CRLF-terminated message.
+	mc := newMockConn("\nmsg\r\n")
+
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.Config{OkapiURL: "https://folio.example.com"}
+	server, _ := NewServer(cfg, logger)
+	tenantService := tenant.NewService(cfg)
+
+	conn := NewConnection(
+		mc,
+		session,
+		tenantService,
+		make(map[parser.MessageCode]MessageHandler),
+		server,
+		6443,
+		"127.0.0.1",
+	)
+
+	reader := bufio.NewReader(mc.readBuf)
+	message, err := conn.readMessage(reader)
+	assert.NoError(t, err)
+	assert.Equal(t, "msg", message, "leading orphaned LF should be discarded even when the current delimiter is \"\\r\\n\"")
+}
+
+// TestHandle_FullSIPSequence_TenantSwitchDelimiterMismatch reproduces the production bug:
+// the pre-login "default" tenant is configured with a CR-only delimiter ("\r"), while the
+// tenant the client resolves to at LOGIN (via username prefix) is configured with "\r\n".
+// The client always terminates messages with CRLF regardless of which tenant is active.
+//
+// Before the fix, SC Status and Login (read under the default tenant's CR-only delimiter)
+// each left an unconsumed trailing '\n' in the stream. After LOGIN switches the session to
+// the "\r\n"-delimited tenant, the next read (Patron Info) picked up that orphaned '\n' as
+// its first byte, corrupting the 2-character message code and failing validation — even
+// though the fix for the single-tenant CR-only case was already in place, because that fix
+// only checked the *current* read's delimiter, not the delimiter the *previous* read used.
+func TestHandle_FullSIPSequence_TenantSwitchDelimiterMismatch(t *testing.T) {
+	const patronInfoDate = "20240101    120000"
+	const patronInfoSummary = "          " // 10 spaces
+
+	scStatusMsg := "9900302.00"
+	// CN carries a username prefix that resolves the session to the "springysip" tenant.
+	loginMsg := "9300CNspringysip_sip1|COsippass|"
+	patronInfoMsg := "63000" + patronInfoDate + patronInfoSummary + "|AApatron123|AOtest|"
+
+	// Client always sends CRLF, independent of which tenant is currently active.
+	const clientDelim = "\r\n"
+
+	defaultTc := &config.TenantConfig{
+		Tenant:           "default",
+		MessageDelimiter: "\r", // CR-only — mismatched with the client's actual CRLF framing
+		FieldDelimiter:   "|",
+		Charset:          "UTF-8",
+		SupportedMessages: []config.MessageSupport{
+			{Code: "99", Enabled: true}, // SC Status
+			{Code: "93", Enabled: true}, // Login
+		},
+	}
+	springySipTc := &config.TenantConfig{
+		Tenant:           "springysip",
+		MessageDelimiter: "\r\n",
+		FieldDelimiter:   "|",
+		Charset:          "UTF-8",
+		SupportedMessages: []config.MessageSupport{
+			{Code: "99", Enabled: true},
+			{Code: "93", Enabled: true},
+			{Code: "63", Enabled: true}, // Patron Information
+		},
+	}
+
+	cfg := &config.Config{
+		Tenants: map[string]*config.TenantConfig{
+			"default":    defaultTc,
+			"springysip": springySipTc,
+		},
+		SCTenants: []config.SCTenantConfig{
+			{Tenant: "springysip", UsernamePrefixes: []string{"springysip_"}},
+		},
+	}
+
+	handlers := map[parser.MessageCode]MessageHandler{
+		parser.SCStatus: &mockHandlerFunc{fn: func(ctx context.Context, msg *parser.Message, s *types.Session) (string, error) {
+			return "98YNNN030003" + patronInfoDate + "2.00|AOtest|AMTest Library|BXYYYYYYYYYYYYYYYYYY", nil
+		}},
+		parser.LoginRequest: &mockHandlerFunc{fn: func(ctx context.Context, msg *parser.Message, s *types.Session) (string, error) {
+			return "94100", nil
+		}},
+		parser.PatronInformationRequest: &mockHandlerFunc{fn: func(ctx context.Context, msg *parser.Message, s *types.Session) (string, error) {
+			return "64              00020240101    120000|AOtest|AApatron123|AETest Patron", nil
+		}},
+	}
+
+	serverConn, clientConn := net.Pipe()
+
+	sess := types.NewSession("test-session", defaultTc)
+	logger := zap.NewNop()
+	srv, _ := NewServer(cfg, logger)
+	ts := tenant.NewService(cfg)
+	conn := NewConnection(serverConn, sess, ts, handlers, srv, 6443, "127.0.0.1")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- conn.Handle(ctx)
+	}()
+
+	// readResponse reads from clientConn until the given delimiter, with a 2 s deadline.
+	readResponse := func(label, delim string) string {
+		t.Helper()
+		clientConn.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+		reader := bufio.NewReader(clientConn)
+		delimBytes := []byte(delim)
+
+		var buf []byte
+		for {
+			b := make([]byte, 1)
+			_, err := reader.Read(b)
+			if err != nil {
+				t.Fatalf("%s: read error before delimiter: %v", label, err)
+			}
+			buf = append(buf, b[0])
+			if len(buf) >= len(delimBytes) {
+				tail := buf[len(buf)-len(delimBytes):]
+				if string(tail) == delim {
+					return string(buf[:len(buf)-len(delimBytes)])
+				}
+			}
+		}
+	}
+
+	sendMsg := func(body string) {
+		t.Helper()
+		clientConn.SetWriteDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
+		_, err := clientConn.Write([]byte(body + clientDelim))
+		if err != nil {
+			t.Fatalf("client write error: %v", err)
+		}
+	}
+
+	// --- Step 1: SC Status (99), read under default tenant's "\r" delimiter ---
+	sendMsg(scStatusMsg)
+	resp98 := readResponse("ACS Status", defaultTc.MessageDelimiter)
+	if !strings.HasPrefix(resp98, "98") {
+		t.Errorf("SC Status: expected response starting with '98', got: %.30q", resp98)
+	}
+
+	// --- Step 2: Login (93), read under default tenant's "\r" delimiter; resolves the
+	// session to the "springysip" tenant ("\r\n" delimiter) as a side effect ---
+	sendMsg(loginMsg)
+	resp94 := readResponse("Login Response", defaultTc.MessageDelimiter)
+	if !strings.HasPrefix(resp94, "94") {
+		t.Errorf("Login: expected response starting with '94', got: %.30q", resp94)
+	}
+
+	// --- Step 3: Patron Info (63) — this is the message that failed before the fix.
+	// The '\n' orphaned by the CR-only Login read leaked into this message under the
+	// newly-active "\r\n" delimiter, corrupting its message code. ---
+	sendMsg(patronInfoMsg)
+	resp64 := readResponse("Patron Info Response", springySipTc.MessageDelimiter)
+	if !strings.HasPrefix(resp64, "64") {
+		t.Errorf("Patron Info: expected response starting with '64', got: %.30q", resp64)
+	}
+
+	clientConn.Close()
+
+	select {
+	case err := <-serverErr:
+		if err != nil && !strings.Contains(err.Error(), "EOF") &&
+			!strings.Contains(err.Error(), "closed") &&
+			!strings.Contains(err.Error(), "pipe") {
+			t.Errorf("Handle() returned unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Errorf("Handle() did not return after client closed connection")
+		cancel()
 	}
 }
