@@ -126,11 +126,13 @@ func (h *CheckinHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 	// Perform checkin
 	loan, err := circClient.Checkin(ctx, token, checkinReq)
 	if err != nil {
+		errorMessage := ExtractFolioErrorMessage(err, "Checkin failed")
 		h.logger.Error("Checkin failed",
 			zap.String("item_identifier", itemIdentifier),
+			zap.String("folio_error", errorMessage),
 			zap.Error(err),
 		)
-		return h.buildCheckinResponse(false, institutionID, itemIdentifier, currentLocation, msg, session), nil
+		return h.buildCheckinResponseWithMessage(false, institutionID, itemIdentifier, currentLocation, errorMessage, msg, session), nil
 	}
 
 	h.logger.Info("Checkin successful",

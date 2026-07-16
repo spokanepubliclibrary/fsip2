@@ -68,7 +68,7 @@ This document provides a comprehensive reference for all supported SIP2 messages
 | Checkin Notes | AG | No | No | Item checkin notes (repeatable) | Item → CirculationNotes (Check in notes) |
 | Hold Shelf Expiration | CM | No | Yes | Hold shelf expiration date | Request → HoldShelfExpirationDate |
 | Requestor Name | DA | No | Yes | Patron name who placed hold | Request → Requester → LastName, FirstName |
-| Screen Message | AF | No | No | Messages for display | "Checkin successful" or error messages |
+| Screen Message | AF | No | No | Messages for display | "Checkin successful", or the FOLIO circulation API's error message on failure |
 | Print Line | AV | No | No | Print messages | Not implemented |
 
 ### Alert Type Calculation (CV Field)
@@ -171,7 +171,7 @@ Most Automated Material Handlers (AMH) work with top-down rules. Here is an exam
 | Media Type | CK | No | No | SIP2 media type code | Item → MaterialType → Mapped |
 | Item Properties | BV | No | No | Item properties | Not implemented |
 | Transaction ID | BK | No | No | Transaction identifier | Loan → ID |
-| Screen Message | AF | No | No | Messages for display | Success/error messages |
+| Screen Message | AF | No | No | Messages for display | Success message, or the FOLIO circulation API's error message on failure |
 | Print Line | AG | No | No | Print messages | Not implemented |
 
 ### Configuration Options
@@ -629,7 +629,7 @@ Each position is 'Y' (true) or ' ' (space, false):
 | Item Identifier | AB | Yes | No | Item barcode | Request echo |
 | Title Identifier | AJ | Yes | No | Instance title (truncated to 60 chars) | Loan → Item → Instance → Title |
 | Due Date | AH | No | No | New due date | Loan → DueDate (updated) |
-| Screen Message | AF | No | No | Messages for display | Success/error messages |
+| Screen Message | AF | No | No | Messages for display | Success message, or the FOLIO circulation API's error message on failure |
 | Print Line | AG | No | No | Print messages | Not implemented |
 
 ---
@@ -694,7 +694,7 @@ Each position is 'Y' (true) or ' ' (space, false):
 | Institution ID | AO | Yes | Institution identifier | Request echo |
 | Patron Identifier | AA | Yes | Patron barcode | Request echo |
 | Transaction ID | BK | No | FOLIO payment ID | Payment → ID |
-| Screen Message | AF | No | Messages for display | Success/error messages |
+| Screen Message | AF | No | Messages for display | Success message, or the FOLIO fees/fines API's error message on failure |
 | Print Line | AG | No | Print messages | Not implemented |
 
 ### Additional details about fee/fine messages
@@ -857,7 +857,7 @@ patronCustomFields:
 | Patron Identifier | AA | Yes | Patron barcode | Request echo |
 | Renewed Items | BM | No | Renewed item barcodes (repeatable) | Loan → Item → Barcode (successful) |
 | Unrenewed Items | BN | No | Unrenewed item barcodes (repeatable) | Loan → Item → Barcode (failed) |
-| Screen Message | AF | No | Messages for display | Status messages |
+| Screen Message | AF | No | Messages for display | Count summary (e.g. "No items could be renewed"), suffixed with the FOLIO error message from the first failed renewal |
 | Print Line | AG | No | Print messages | Not implemented |
 
 ### Configuration Options

@@ -134,23 +134,13 @@ func (h *RenewHandler) Handle(ctx context.Context, msg *parser.Message, session 
 	// Perform renewal
 	loan, err := circClient.Renew(ctx, token, renewReq)
 	if err != nil {
-		// Extract detailed error message from FOLIO
-		errorMessage := "Renewal failed"
-		if httpErr, ok := err.(*folio.HTTPError); ok {
-			errorMessage = httpErr.ParseErrorMessage()
-			h.logger.Error("Renewal failed with FOLIO error",
-				zap.String("patron_id", patronID),
-				zap.String("item_identifier", itemIdentifier),
-				zap.String("folio_error", errorMessage),
-				zap.Int("status_code", httpErr.StatusCode),
-			)
-		} else {
-			h.logger.Error("Renewal failed",
-				zap.String("patron_id", patronID),
-				zap.String("item_identifier", itemIdentifier),
-				zap.Error(err),
-			)
-		}
+		errorMessage := ExtractFolioErrorMessage(err, "Renewal failed")
+		h.logger.Error("Renewal failed",
+			zap.String("patron_id", patronID),
+			zap.String("item_identifier", itemIdentifier),
+			zap.String("folio_error", errorMessage),
+			zap.Error(err),
+		)
 		return h.buildRenewResponseWithError(false, institutionID, patronIdentifier, itemIdentifier, errorMessage, msg, session.TenantConfig), nil
 	}
 

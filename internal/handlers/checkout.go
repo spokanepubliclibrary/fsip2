@@ -135,12 +135,14 @@ func (h *CheckoutHandler) Handle(ctx context.Context, msg *parser.Message, sessi
 	// Perform checkout
 	loan, err := circClient.Checkout(ctx, token, checkoutReq)
 	if err != nil {
+		errorMessage := ExtractFolioErrorMessage(err, "Checkout failed")
 		h.logger.Error("Checkout failed",
 			zap.String("patron_id", patronID),
 			zap.String("item_identifier", itemIdentifier),
+			zap.String("folio_error", errorMessage),
 			zap.Error(err),
 		)
-		return h.buildCheckoutResponse(false, institutionID, patronIdentifier, itemIdentifier, itemIdentifier, time.Time{}, msg, session, "Checkout failed"), nil
+		return h.buildCheckoutResponse(false, institutionID, patronIdentifier, itemIdentifier, itemIdentifier, time.Time{}, msg, session, errorMessage), nil
 	}
 
 	h.logger.Info("Checkout successful",

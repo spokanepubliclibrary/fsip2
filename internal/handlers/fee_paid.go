@@ -183,7 +183,7 @@ func (h *FeePaidHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 				zap.String("account_id", accountID),
 				zap.Error(result.error),
 			)
-			return h.buildErrorResponse(institutionID, patronIdentifier, "No fee/fine could be found by ID", msg, session), nil
+			return h.buildErrorResponse(institutionID, patronIdentifier, ExtractFolioErrorMessage(result.error, "Payment failed - see staff for details"), msg, session), nil
 		}
 	} else {
 		// No account ID provided - use bulk payment if enabled
@@ -207,7 +207,14 @@ func (h *FeePaidHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 
 	if successCount == 0 {
 		h.logger.Error("All payment attempts failed", zap.Int("attempted", len(results)))
-		return h.buildErrorResponse(institutionID, patronIdentifier, "Payment failed - see staff for details", msg, session), nil
+		var firstErr error
+		for _, r := range results {
+			if !r.success {
+				firstErr = r.error
+				break
+			}
+		}
+		return h.buildErrorResponse(institutionID, patronIdentifier, ExtractFolioErrorMessage(firstErr, "Payment failed - see staff for details"), msg, session), nil
 	}
 
 	h.logResponse(string(parser.FeePaidResponse), session, nil)
@@ -297,7 +304,7 @@ func (h *FeePaidHandler) payBulkAccounts(
 			zap.String("user_id", userID),
 			zap.Error(err),
 		)
-		return results
+		return []paymentResult{{success: false, error: err}}
 	}
 
 	if len(accounts.Accounts) == 0 {
@@ -334,7 +341,7 @@ func (h *FeePaidHandler) payBulkAccounts(
 			zap.Float64("amount", feeAmount),
 			zap.Error(err),
 		)
-		return results
+		return []paymentResult{{success: false, error: err}}
 	}
 
 	h.logger.Info("Bulk payment submitted",

@@ -917,6 +917,74 @@ func TestRenewAllHandler_MultipleLoans(t *testing.T) {
 	}
 }
 
+// TestRenewAllHandler_ScreenMessageIncludesFolioErrorDetail tests that when a
+// renewal fails with a FOLIO HTTPError, the overall AF screen message surfaces
+// FOLIO's real error text (via ExtractFolioErrorMessage) rather than just the
+// generic count-based summary.
+func TestRenewAllHandler_ScreenMessageIncludesFolioErrorDetail(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/circulation/loans"):
+			dueDate := time.Now().Add(7 * 24 * time.Hour)
+			loans := models.LoanCollection{
+				Loans: []models.Loan{
+					{ID: "loan-1", UserID: "user-123", ItemID: "item-1", DueDate: &dueDate, Status: models.LoanStatus{Name: "Open"}},
+				},
+				TotalRecords: 1,
+			}
+			json.NewEncoder(w).Encode(loans)
+		case strings.Contains(r.URL.Path, "/circulation/renew-by-id"):
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			w.Write([]byte(`{"message": "Loan not renewable, on hold for another patron"}`))
+		case strings.Contains(r.URL.Path, "/inventory/items/item-1"):
+			json.NewEncoder(w).Encode(models.Item{ID: "item-1", Barcode: "ITEM001"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer mockServer.Close()
+
+	tenantConfig := &config.TenantConfig{
+		OkapiURL:         mockServer.URL,
+		Tenant:           "test",
+		FieldDelimiter:   "|",
+		MessageDelimiter: "\r",
+	}
+
+	session := types.NewSession("test-conn", tenantConfig)
+	session.SetAuthenticated("testuser", "user-123", "12345", "token-123", time.Now().Add(1*time.Hour))
+
+	logger := zap.NewNop()
+	handler := NewRenewAllHandler(logger, tenantConfig)
+
+	msg := &parser.Message{
+		Code: parser.RenewAllRequest,
+		Fields: map[string]string{
+			string(parser.InstitutionID):    "TEST",
+			string(parser.PatronIdentifier): "12345",
+		},
+	}
+
+	response, err := handler.Handle(context.Background(), msg, session)
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+
+	// All renewals failed
+	if !strings.Contains(response, "BN0001") {
+		t.Errorf("Expected 1 unrenewed item: %s", response)
+	}
+	if !strings.Contains(response, "BM0000") {
+		t.Errorf("Expected 0 renewed items: %s", response)
+	}
+
+	// The AF screen message should surface FOLIO's real error detail, not just
+	// the generic "No items could be renewed" summary.
+	if !strings.Contains(response, "|AFNo items could be renewed: Loan not renewable, on hold for another patron") {
+		t.Errorf("Expected AF field to contain FOLIO error detail: %s", response)
+	}
+}
+
 // TestRenewAllHandler_AuthenticationError tests when authentication fails
 func TestRenewAllHandler_AuthenticationError(t *testing.T) {
 	tenantConfig := &config.TenantConfig{

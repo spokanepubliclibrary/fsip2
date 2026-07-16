@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/spokanepubliclibrary/fsip2/internal/folio"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/tests/testutil"
@@ -123,6 +124,47 @@ func TestCheckoutHandle_CheckoutPolicyViolation(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(resp, "12"))
 	assert.Equal(t, byte('0'), resp[2], "ok byte must be '0' when checkout API fails")
+
+	mockPatron.AssertExpectations(t)
+	mockCirc.AssertExpectations(t)
+}
+
+// TestCheckoutHandle_CheckoutAPIFails_FolioErrorMessage verifies that when the
+// Checkout API fails with a *folio.HTTPError, the real FOLIO error message is
+// propagated into the response's AF (screen message) field instead of the
+// generic "Checkout failed" fallback string.
+func TestCheckoutHandle_CheckoutAPIFails_FolioErrorMessage(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	// Empty patron ID → handler calls GetUserByBarcode first.
+	sess := testutil.NewAuthSession(tc, testutil.WithSessionUser("testuser", "", ""), testutil.WithLocationCode("test-service-point-uuid"))
+	user := makeTestUser()
+
+	mockPatron := &MockPatronClient{}
+	mockCirc := &MockCirculationClient{}
+
+	mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
+	mockCirc.On("Checkout", mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, &folio.HTTPError{
+			StatusCode: 422,
+			Body:       `{"message": "Item already checked out to another patron"}`,
+		})
+
+	h := NewCheckoutHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, mockPatron, mockCirc, nil, nil)
+
+	msg := buildTestMsg(parser.CheckoutRequest, map[parser.FieldCode]string{
+		parser.InstitutionID:    "TEST-INST",
+		parser.PatronIdentifier: user.Barcode,
+		parser.ItemIdentifier:   "ITEM-001",
+	})
+
+	resp, err := h.Handle(context.Background(), msg, sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "12"))
+	assert.Equal(t, byte('0'), resp[2], "ok byte must be '0' when checkout API fails")
+	assert.Contains(t, resp, "Item already checked out to another patron", "AF field should contain the real FOLIO error message")
+	assert.NotContains(t, resp, "AFCheckout failed", "AF field should not contain the generic fallback message")
 
 	mockPatron.AssertExpectations(t)
 	mockCirc.AssertExpectations(t)
