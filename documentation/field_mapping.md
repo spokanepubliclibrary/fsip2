@@ -568,7 +568,7 @@ Truncation preserves UTF-8 multibyte characters correctly.
 | Valid Patron | BL | No | Patron valid (Y/N) | User → Active |
 | Valid Patron Password | CQ | No | Password valid (Y/N) | PIN verification result |
 | Currency Type | BH | No | Currency code | Configuration: currency |
-| Fee Amount | BV | No | Total outstanding fees | Sum of open accounts |
+| Fee Amount | BV | No | Total outstanding fees (always present for a valid patron; `0.00` when the patron has no open fee/fine accounts) | Sum of open accounts |
 | Screen Message | AF | No | Messages for display | Status messages |
 | Print Line | AG | No | Print messages | Not implemented |
 
@@ -781,7 +781,7 @@ Each position controls inclusion of detail fields (Y/N):
 | Valid Patron | BL | No | No | Patron valid (Y/N) | User → Active |
 | Valid Patron Password | CQ | No | No | Password valid (Y/N) | PIN verification result |
 | Currency Type | BH | No | No | Currency code | Configuration: currency |
-| Fee Amount | BV | No | No | Total outstanding fees | Sum of accounts → Amount - Paid |
+| Fee Amount | BV | No | No | Total outstanding fees (always present for a valid patron; `0.00` when the patron has no open fee/fine accounts) | Sum of accounts → Amount - Paid |
 | Fee Limit | CC | No | No | Fee limit | Not implemented |
 | **Item Detail Fields (Controlled by Summary)** |
 | Hold Items | AS | No | Summary[0] | Hold item barcodes (repeatable) | Request → Item → Barcode |

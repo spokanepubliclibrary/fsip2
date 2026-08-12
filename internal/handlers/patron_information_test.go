@@ -79,10 +79,10 @@ func TestBuildPatronInformationResponse_ValidPatron(t *testing.T) {
 				"|BLY",                         // Valid patron
 				"|CQY",                         // Valid PIN
 				"|AY1",                         // Sequence number
+				"|BV0.00",                      // Zero fee amount always present
+				"|BH" + "USD",                  // Currency always present
 			},
 			wantNotContains: []string{
-				"|BV", // No fees
-				"|BH", // No currency when no fees
 				"|AS", // No available holds
 				"|AT", // No overdue items
 				"|AU", // No charged items
@@ -1527,12 +1527,12 @@ func TestBuildPatronInformationResponse_CountsWithNoData(t *testing.T) {
 		}
 	}
 
-	// Should not contain fee amount or currency when no accounts
-	if strings.Contains(response, "|BV") {
-		t.Error("Response should NOT contain |BV when no accounts exist")
+	// Fee amount and currency should always be present, even with zero balance
+	if !strings.Contains(response, "|BV0.00") {
+		t.Error("Response should contain |BV0.00 when patron has no open accounts")
 	}
-	if strings.Contains(response, "|BH") {
-		t.Error("Response should NOT contain |BH when no accounts exist")
+	if !strings.Contains(response, "|BH") {
+		t.Error("Response should contain |BH (currency) even with zero balance")
 	}
 }
 

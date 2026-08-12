@@ -441,6 +441,23 @@ func (h *BaseHandler) formatPatronName(user *models.User, usePreferred bool) str
 	return user.Username
 }
 
+// buildFeeFields returns the BV (Fee Amount) and BH (Currency Type) fields,
+// always present for a valid patron. BV reflects the sum of Remaining balances
+// across accounts (0.00 when the patron has no open fee/fine accounts).
+// This consolidates duplicated logic from patron_status and patron_information handlers.
+func (h *BaseHandler) buildFeeFields(accounts []*models.Account, currency string) string {
+	totalOutstanding := 0.0
+	for _, account := range accounts {
+		totalOutstanding += account.Remaining.Float64()
+	}
+
+	if currency == "" {
+		currency = "USD"
+	}
+
+	return fmt.Sprintf("|BV%.2f|BH%s", totalOutstanding, currency)
+}
+
 // formatRequestorName formats a requestor's name in "LastName, FirstName" format.
 // Uses RequestRequester.FirstName directly (preferred-name lookup is handled at the handler level).
 func (h *BaseHandler) formatRequestorName(requester *models.RequestRequester) string {
