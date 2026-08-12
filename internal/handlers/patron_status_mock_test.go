@@ -47,7 +47,7 @@ func TestPatronStatusHandle_ValidPatron_NoBlocks_NoFees(t *testing.T) {
 	assert.True(t, strings.HasPrefix(resp, "24"), "response must start with 24")
 	assert.Contains(t, resp, "|BLY", "valid patron flag required")
 	assert.Contains(t, resp, "|AOTEST-INST", "institution ID in response")
-	assert.NotContains(t, resp, "|BV", "no fee field when accounts are empty")
+	assert.Contains(t, resp, "|BV0.00", "zero balance still reports BV0.00")
 	// All-spaces patron status (no blocks): position 2-15 should all be spaces
 	assert.Equal(t, byte(' '), resp[2], "charge privileges bit should be space (no block)")
 

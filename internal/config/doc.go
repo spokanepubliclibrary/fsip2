@@ -94,8 +94,8 @@
 //	    - "BF"  # Currency type
 //	    - "BH"  # Patron currency
 //	  "64":  # Patron information response
-//	    - "BV"  # Fee limit
-//	    - "CC"  # Fee amount
+//	    - "BV"  # Fee amount
+//	    - "CC"  # Fee limit
 //
 // This enables/disables specific SIP2 fields based on kiosk vendor requirements.
 //
