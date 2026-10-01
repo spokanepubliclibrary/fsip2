@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
+	"github.com/spokanepubliclibrary/fsip2/internal/folio"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/tests/testutil"
@@ -111,6 +112,48 @@ func TestCheckinHandle_CheckinFails(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(resp, "10"))
 	assert.Equal(t, byte('0'), resp[2], "ok byte must be '0' for failed checkin")
+
+	mockInv.AssertExpectations(t)
+	mockCirc.AssertExpectations(t)
+}
+
+// TestCheckinHandle_CheckinAPIFails_FolioErrorMessage verifies that when the FOLIO
+// circulation API returns an HTTPError, the real FOLIO error message is propagated
+// into the AF (screen message) field of the 10 response, instead of the generic
+// hardcoded "Checkin failed" string.
+func TestCheckinHandle_CheckinAPIFails_FolioErrorMessage(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	sess := testutil.NewAuthSession(tc)
+	sess.SetLocationCode("SP-001")
+
+	item := availableItemNoHoldings("item-005", "ITEM-005")
+
+	mockInv := &MockInventoryClient{}
+	mockCirc := &MockCirculationClient{}
+
+	mockInv.On("GetItemByBarcode", mock.Anything, mock.Anything, "ITEM-005").Return(item, nil)
+	mockCirc.On("Checkin", mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, &folio.HTTPError{
+			StatusCode: 422,
+			Body:       `{"errors": [{"message": "Item not checked out"}]}`,
+		})
+
+	h := NewCheckinHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, nil, mockCirc, mockInv, nil)
+
+	msg := buildTestMsg(parser.CheckinRequest, map[parser.FieldCode]string{
+		parser.InstitutionID:   "TEST-INST",
+		parser.ItemIdentifier:  "ITEM-005",
+		parser.CurrentLocation: "SP-001",
+	})
+
+	resp, err := h.Handle(context.Background(), msg, sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "10"), "response must start with 10")
+	assert.Equal(t, byte('0'), resp[2], "ok byte must be '0' for failed checkin")
+	assert.Contains(t, resp, "AFItem not checked out", "AF field must contain the real FOLIO error message")
+	assert.NotContains(t, resp, "AFCheckin failed", "AF field must not contain the generic fallback message")
 
 	mockInv.AssertExpectations(t)
 	mockCirc.AssertExpectations(t)

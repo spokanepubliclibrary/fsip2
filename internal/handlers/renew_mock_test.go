@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/spokanepubliclibrary/fsip2/internal/folio"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/tests/testutil"
@@ -299,4 +300,40 @@ func TestRenewHandle_UnicodeTitleTruncatedCorrectly(t *testing.T) {
 
 	mockCirc.AssertExpectations(t)
 	mockInv.AssertExpectations(t)
+}
+
+// TestRenewHandle_RenewAPIFails_FolioErrorMessage verifies that when
+// circClient.Renew fails with a *folio.HTTPError, the handler surfaces the
+// FOLIO API's own error message (via ExtractFolioErrorMessage) in the AF
+// field of the Renew Response, rather than the generic "Renewal failed"
+// fallback.
+func TestRenewHandle_RenewAPIFails_FolioErrorMessage(t *testing.T) {
+	tc   := testutil.NewTenantConfig()
+	sess := testutil.NewAuthSession(tc, testutil.WithLocationCode("test-service-point-uuid"))
+
+	mockCirc := &MockCirculationClient{}
+
+	httpErr := &folio.HTTPError{
+		StatusCode: 422,
+		Body:       `{"message": "Loan is not renewable"}`,
+	}
+	mockCirc.On("Renew", mock.Anything, mock.Anything, mock.Anything).Return(nil, httpErr)
+
+	h := NewRenewHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, nil, mockCirc, nil, nil)
+
+	msg := buildTestMsg(parser.RenewRequest, map[parser.FieldCode]string{
+		parser.InstitutionID:    "TEST-INST",
+		parser.PatronIdentifier: "123456",
+		parser.ItemIdentifier:   "ITEM-R-008",
+	})
+
+	resp, err := h.Handle(context.Background(), msg, sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "30"), "response must start with 30")
+	assert.Contains(t, resp, "Loan is not renewable")
+	assert.NotContains(t, resp, "AFRenewal failed")
+
+	mockCirc.AssertExpectations(t)
 }

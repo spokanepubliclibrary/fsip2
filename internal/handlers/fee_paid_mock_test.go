@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
+	"github.com/spokanepubliclibrary/fsip2/internal/folio"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/tests/testutil"
@@ -371,6 +372,94 @@ func TestBulkPayment_NoEligibleAccounts(t *testing.T) {
 
 	mockPatron.AssertExpectations(t)
 	mockFees.AssertExpectations(t) // verifies PayBulkAccounts was never called
+}
+
+// TestFeePaidHandle_SinglePaymentAPIFails_FolioErrorMessage verifies that when
+// PayAccount fails with a *folio.HTTPError (execution failure, not an
+// eligibility/not-found failure), the real FOLIO error message is propagated
+// into the response's AF (screen message) field instead of a generic string.
+func TestFeePaidHandle_SinglePaymentAPIFails_FolioErrorMessage(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	sess := testutil.NewAuthSession(tc, testutil.WithSessionUser("testuser", "", ""))
+	user := makeTestUser()
+
+	account := &models.Account{
+		ID:        "acc-001",
+		FeeFineID: "ff-001",
+		Remaining: models.FlexibleFloat(10.00),
+	}
+
+	mockPatron := &MockPatronClient{}
+	mockFees := &MockFeesClient{}
+
+	mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
+	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, "acc-001").Return(account, nil)
+	mockFees.On("PayAccount", mock.Anything, mock.Anything, "acc-001", mock.Anything).
+		Return(nil, &folio.HTTPError{
+			StatusCode: 422,
+			Body:       `{"message": "Payment method not permitted"}`,
+		})
+
+	h := NewFeePaidHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, mockPatron, nil, nil, mockFees)
+
+	msg := feePaidMsg(user.Barcode, "10.00", map[parser.FieldCode]string{
+		parser.FeeIdentifier: "acc-001",
+	})
+
+	resp, err := h.Handle(context.Background(), msg, sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "38"))
+	assert.Equal(t, byte('N'), resp[2], "response must be N when PayAccount execution fails")
+	assert.Contains(t, resp, "Payment method not permitted", "AF field must contain the real FOLIO error message")
+
+	mockPatron.AssertExpectations(t)
+	mockFees.AssertExpectations(t)
+}
+
+// TestFeePaidHandle_BulkPaymentAPIFails_FolioErrorMessage verifies that when all
+// bulk payments fail because PayBulkAccounts returns a *folio.HTTPError, the real
+// FOLIO error message is propagated into the response's AF (screen message) field.
+func TestFeePaidHandle_BulkPaymentAPIFails_FolioErrorMessage(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	tc.AcceptBulkPayment = true
+	sess := testutil.NewAuthSession(tc, testutil.WithSessionUser("testuser", "", ""))
+	user := makeTestUser()
+
+	accounts := &models.AccountCollection{
+		Accounts: []models.Account{
+			{ID: "acc-b1", FeeFineID: "ff-b1", Remaining: models.FlexibleFloat(5.00)},
+			{ID: "acc-b2", FeeFineID: "ff-b2", Remaining: models.FlexibleFloat(5.00)},
+		},
+	}
+
+	mockPatron := &MockPatronClient{}
+	mockFees := &MockFeesClient{}
+
+	mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
+	mockFees.On("GetOpenAccountsExcludingSuspended", mock.Anything, mock.Anything, user.ID).
+		Return(accounts, nil)
+	mockFees.On("PayBulkAccounts", mock.Anything, mock.Anything, mock.Anything).
+		Return(&folio.HTTPError{
+			StatusCode: 422,
+			Body:       `{"message": "Fee/fine account is closed"}`,
+		})
+
+	h := NewFeePaidHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, mockPatron, nil, nil, mockFees)
+
+	msg := feePaidMsg(user.Barcode, "10.00")
+
+	resp, err := h.Handle(context.Background(), msg, sess)
+
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(resp, "38"))
+	assert.Equal(t, byte('N'), resp[2], "response must be N when all bulk payments fail")
+	assert.Contains(t, resp, "Fee/fine account is closed", "AF field must contain the real FOLIO error message")
+
+	mockPatron.AssertExpectations(t)
+	mockFees.AssertExpectations(t)
 }
 
 // TestBulkPayment_SingleEligibleAccount verifies that a single open account is

@@ -132,6 +132,7 @@ func (h *RenewAllHandler) Handle(ctx context.Context, msg *parser.Message, sessi
 	// Track renewed and unrenewed items
 	var renewedItems []string
 	var unrenewedItems []string
+	var firstFailureMessage string
 
 	// Process each loan individually
 	for _, loan := range loans {
@@ -144,10 +145,16 @@ func (h *RenewAllHandler) Handle(ctx context.Context, msg *parser.Message, sessi
 		renewedLoan, err := circClient.RenewByID(ctx, token, renewReq)
 		if err != nil {
 			// Renewal failed - get item barcode for BN field
+			folioErrorMessage := ExtractFolioErrorMessage(err, "renewal failed")
 			h.logger.Warn("Renewal failed for item",
 				zap.String("item_id", loan.ItemID),
 				zap.Error(err),
+				zap.String("folio_error", folioErrorMessage),
 			)
+
+			if firstFailureMessage == "" {
+				firstFailureMessage = folioErrorMessage
+			}
 
 			// Fetch item barcode
 			item, itemErr := inventoryClient.GetItemByID(ctx, token, loan.ItemID)
@@ -197,9 +204,17 @@ func (h *RenewAllHandler) Handle(ctx context.Context, msg *parser.Message, sessi
 	ok := len(renewedItems) > 0
 	screenMessages := []string{}
 	if len(renewedItems) > 0 && len(unrenewedItems) > 0 {
-		screenMessages = append(screenMessages, "Some items could not be renewed")
+		msg := "Some items could not be renewed"
+		if firstFailureMessage != "" {
+			msg += ": " + firstFailureMessage
+		}
+		screenMessages = append(screenMessages, msg)
 	} else if len(renewedItems) == 0 && len(unrenewedItems) > 0 {
-		screenMessages = append(screenMessages, "No items could be renewed")
+		msg := "No items could be renewed"
+		if firstFailureMessage != "" {
+			msg += ": " + firstFailureMessage
+		}
+		screenMessages = append(screenMessages, msg)
 	}
 
 	response, err := responseBuilder.BuildRenewAllResponse(
