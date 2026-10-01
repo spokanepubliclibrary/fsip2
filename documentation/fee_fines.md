@@ -35,11 +35,11 @@ The fine items count (position 61-64) **always** reflects the actual number of o
 
 #### Variable Fields
 
-**BV** - Total Outstanding Balance (always included when accounts exist)
+**BV** - Total Outstanding Balance (always included; `BV0.00` when the patron has no open fee/fine accounts)
 - Total remaining balance across all open accounts
 - Format: `BV<amount>` (e.g., `BV6.95`)
 
-**BH** - Currency Type (always included when accounts exist)
+**BH** - Currency Type (always included alongside BV, even when the patron has no open fee/fine accounts)
 - Currency code from tenant configuration (defaults to USD)
 - Format: `BH<currency>` (e.g., `BHUSD`)
 
@@ -81,7 +81,7 @@ Vendors can use these regex patterns to extract information from the AV field:
 
 ### Implementation Details
 
-See [patron_information.go:254-268](../../internal/handlers/patron_information.go#L254-L268) for account retrieval and [patron_information.go:590-609](../../internal/handlers/patron_information.go#L590-L609) for AV field construction.
+See `buildFeeFields` in [base.go](../../internal/handlers/base.go) for BV/BH construction (shared across the Patron Information and Patron Status handlers) and patron_information.go for AV field construction.
 
 ---
 

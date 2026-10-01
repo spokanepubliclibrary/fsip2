@@ -263,22 +263,8 @@ func (h *PatronStatusHandler) buildPatronStatusResponse(
 			response += "|CQN"
 		}
 
-		// Add currency type and fee amount if there are fines
-		if len(accounts) > 0 {
-			// BV - Calculate total outstanding balance
-			totalOutstanding := 0.0
-			for _, account := range accounts {
-				totalOutstanding += account.Remaining.Float64()
-			}
-			response += fmt.Sprintf("|BV%.2f", totalOutstanding)
-
-			// BH - Currency type from tenant config
-			currency := session.TenantConfig.Currency
-			if currency == "" {
-				currency = "USD" // Default to USD if not configured
-			}
-			response += fmt.Sprintf("|BH%s", currency)
-		}
+		// BV/BH - Fee amount and currency type, always present for a valid patron
+		response += h.buildFeeFields(accounts, session.TenantConfig.Currency)
 	} else {
 		response += "|BLN" // Invalid patron
 		response += "|CQN" // Invalid patron PIN

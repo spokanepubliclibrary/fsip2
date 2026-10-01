@@ -76,7 +76,34 @@ func TestPatronInformationHandle_ValidPatron_Minimal(t *testing.T) {
 	assert.True(t, strings.HasPrefix(resp, "64"), "response must start with 64")
 	assert.Contains(t, resp, "|BLY", "valid patron flag required")
 	assert.Contains(t, resp, "|AOTEST-INST")
-	assert.NotContains(t, resp, "|BV", "no fee field for zero balance")
+	assert.Contains(t, resp, "|BV0.00", "zero balance still reports BV0.00")
+
+	mockPatron.AssertExpectations(t)
+	mockCirc.AssertExpectations(t)
+	mockFees.AssertExpectations(t)
+}
+
+// TestPatronInformationHandle_ZeroBalance_AlwaysReportsFeeAndCurrency locks in the
+// contract that BV (fee amount) and BH (currency type) are always present for a
+// valid patron, even when the patron has no open fee/fine accounts.
+func TestPatronInformationHandle_ZeroBalance_AlwaysReportsFeeAndCurrency(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	sess := testutil.NewAuthSession(tc)
+	user := makeTestUser()
+
+	mockPatron := &MockPatronClient{}
+	mockCirc := &MockCirculationClient{}
+	mockFees := &MockFeesClient{}
+	setupPatronInfoMocks(mockPatron, mockCirc, mockFees, user)
+
+	h := NewPatronInformationHandler(zap.NewNop(), tc)
+	injectMocks(h.BaseHandler, mockPatron, mockCirc, nil, mockFees)
+
+	resp, err := h.Handle(context.Background(), patronInfoMsg(user.Barcode), sess)
+
+	require.NoError(t, err)
+	assert.Contains(t, resp, "|BV0.00", "zero-balance patron must still report BV0.00")
+	assert.Contains(t, resp, "|BH"+tc.Currency, "zero-balance patron must still report configured currency")
 
 	mockPatron.AssertExpectations(t)
 	mockCirc.AssertExpectations(t)

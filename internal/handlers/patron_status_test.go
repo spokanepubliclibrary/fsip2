@@ -96,10 +96,8 @@ func TestBuildPatronStatusResponse_ValidPatronWithFees(t *testing.T) {
 				"|BLY", // Valid patron
 				"|CQN", // PIN not verified
 				"|AY2",
-			},
-			wantNotContains: []string{
-				"|BV", // No fee amount
-				"|BH", // No currency when no fees
+				"|BV0.00",
+				"|BH" + "USD",
 			},
 			wantPatronStatus: "              ", // No blocks
 		},
@@ -437,7 +435,7 @@ func TestBuildPatronStatusResponse_FeeCalculation(t *testing.T) {
 		{
 			name:             "No fees",
 			accounts:         []*models.Account{},
-			expectedFeeTotal: "", // Should not include BV field
+			expectedFeeTotal: "|BV0.00",
 		},
 		{
 			name: "Large fee amount",
@@ -472,16 +470,8 @@ func TestBuildPatronStatusResponse_FeeCalculation(t *testing.T) {
 				session,
 			)
 
-			if tt.expectedFeeTotal == "" {
-				// Should not contain BV field
-				if strings.Contains(response, "|BV") {
-					t.Errorf("Response should not contain BV field when no fees, got: %s", response)
-				}
-			} else {
-				// Should contain the expected fee total
-				if !strings.Contains(response, tt.expectedFeeTotal) {
-					t.Errorf("Expected fee total %q not found in response: %s", tt.expectedFeeTotal, response)
-				}
+			if !strings.Contains(response, tt.expectedFeeTotal) {
+				t.Errorf("Expected fee total %q not found in response: %s", tt.expectedFeeTotal, response)
 			}
 		})
 	}
