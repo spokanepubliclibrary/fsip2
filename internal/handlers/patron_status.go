@@ -242,15 +242,15 @@ func (h *PatronStatusHandler) buildPatronStatusResponse(
 	)
 
 	// Add variable fields
-	response += fmt.Sprintf("|AO%s", institutionID)
-	response += fmt.Sprintf("|AA%s", patronIdentifier)
+	response += protocol.BuildPrefixedField("AO", institutionID, "|")
+	response += protocol.BuildPrefixedField("AA", patronIdentifier, "|")
 
 	if valid && user != nil {
 		// Add patron name using helper (consolidates duplicated logic)
 		if u, ok := user.(*models.User); ok {
 			usePreferred := session.TenantConfig.IsPreferredFirstNameEnabled("23", "AE")
 			patronName := h.formatPatronName(u, usePreferred)
-			response += fmt.Sprintf("|AE%s", patronName)
+			response += protocol.BuildPrefixedField("AE", patronName, "|")
 		}
 
 		// Add valid patron flag

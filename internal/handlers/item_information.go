@@ -9,6 +9,7 @@ import (
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"github.com/spokanepubliclibrary/fsip2/internal/helpers"
 	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/mediatype"
@@ -379,7 +380,7 @@ func (h *ItemInformationHandler) prepareItemResponseData(
 
 	// AJ - Instance Title (truncated to 60 chars)
 	if item.Instance != nil {
-		data.title = truncateString(item.Instance.Title, 60)
+		data.title = helpers.TruncateString(item.Instance.Title, 60)
 	}
 
 	// AQ/AP - Permanent/Current Location
@@ -422,7 +423,7 @@ func (h *ItemInformationHandler) prepareItemResponseData(
 	if item.Instance != nil {
 		data.primaryContributor = getPrimaryContributor(item.Instance)
 		if summary := getSummaryNote(item.Instance); summary != "" {
-			data.workDescription = truncateString(summary, 255)
+			data.workDescription = helpers.TruncateString(summary, 255)
 		}
 		data.isbns = getISBNs(item.Instance)
 		data.upcs = getUPCs(item.Instance)
@@ -516,12 +517,12 @@ func (h *ItemInformationHandler) prepareInstanceResponseData(
 	}
 
 	// AJ - Instance Title (truncated to 60 chars)
-	data.title = truncateString(instance.Title, 60)
+	data.title = helpers.TruncateString(instance.Title, 60)
 
 	// Instance-level fields (EA, DE, IN, NB)
 	data.primaryContributor = getPrimaryContributor(instance)
 	if summary := getSummaryNote(instance); summary != "" {
-		data.workDescription = truncateString(summary, 255)
+		data.workDescription = helpers.TruncateString(summary, 255)
 	}
 	data.isbns = getISBNs(instance)
 	data.upcs = getUPCs(instance)

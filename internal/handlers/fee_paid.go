@@ -371,16 +371,16 @@ func (h *FeePaidHandler) buildErrorResponse(institutionID, patronIdentifier, mes
 	timestamp := protocol.FormatSIP2DateTime(time.Now(), "    ")
 
 	response := fmt.Sprintf("38N%s", timestamp)
-	response += fmt.Sprintf("|AO%s", institutionID)
-	response += fmt.Sprintf("|AA%s", patronIdentifier)
+	response += protocol.BuildPrefixedField("AO", institutionID, "|")
+	response += protocol.BuildPrefixedField("AA", patronIdentifier, "|")
 
 	// Add transaction ID if provided
 	transactionID := msg.GetField(parser.TransactionID)
 	if transactionID != "" {
-		response += fmt.Sprintf("|BK%s", transactionID)
+		response += protocol.BuildPrefixedField("BK", transactionID, "|")
 	}
 
-	response += fmt.Sprintf("|AF%s", message)
+	response += protocol.BuildPrefixedField("AF", message, "|")
 
 	// Use ResponseBuilder to add AY (sequence number) and AZ (checksum) if error detection is enabled
 	sessionBuilder := h.builder
@@ -416,8 +416,8 @@ func (h *FeePaidHandler) buildSuccessResponse(
 	// Fee Paid Response format:
 	// 38<payment_accepted><transaction_date>|AO|AA|CG|FA|FC|FE|FG|AF|AY|AZ
 	response := fmt.Sprintf("38Y%s", timestamp)
-	response += fmt.Sprintf("|AO%s", institutionID)
-	response += fmt.Sprintf("|AA%s", patronIdentifier)
+	response += protocol.BuildPrefixedField("AO", institutionID, "|")
+	response += protocol.BuildPrefixedField("AA", patronIdentifier, "|")
 
 	// Add repeatable fields for each successful payment
 	successCount := 0
@@ -425,28 +425,33 @@ func (h *FeePaidHandler) buildSuccessResponse(
 	for _, result := range results {
 		if result.success && result.account != nil {
 			// CG = Account ID payment was applied to
-			response += fmt.Sprintf("|CG%s", result.account.ID)
+			response += protocol.BuildPrefixedField("CG", result.account.ID, "|")
 
 			// FA = Remaining balance of the account
 			// Use payment response if available (single-account path); otherwise use synthesized value (bulk path).
 			if result.paymentResponse != nil {
-				response += fmt.Sprintf("|FA%s", result.paymentResponse.RemainingAmount)
+				response += protocol.BuildPrefixedField("FA", result.paymentResponse.RemainingAmount, "|")
 			} else {
 				remaining := result.account.Remaining.Float64() - result.amountApplied
 				if remaining < 0 {
 					remaining = 0
 				}
+				// Numeric site: assessed as provably safe — a %.2f of a float64 can emit only
+				// digits, '.', '-' and '+', so it can carry neither a control character nor a
+				// field delimiter. Left as raw fmt.Sprintf intentionally.
 				response += fmt.Sprintf("|FA%.2f", remaining)
 			}
 
 			// FC = Payment date in format YYYYMMDD    HHMMSS (4 spaces)
 			paymentDate := protocol.FormatSIP2DateTime(time.Now(), "    ")
-			response += fmt.Sprintf("|FC%s", paymentDate)
+			response += protocol.BuildPrefixedField("FC", paymentDate, "|")
 
 			// FE = Fee/fine identifier (feeFineId)
-			response += fmt.Sprintf("|FE%s", result.account.FeeFineID)
+			response += protocol.BuildPrefixedField("FE", result.account.FeeFineID, "|")
 
 			// FG = Amount applied to account
+			// Numeric site: assessed as provably safe — a %.2f of a float64 cannot carry a
+			// control character or a field delimiter. Left as raw fmt.Sprintf intentionally.
 			response += fmt.Sprintf("|FG%.2f", result.amountApplied)
 
 			successCount++
@@ -458,7 +463,7 @@ func (h *FeePaidHandler) buildSuccessResponse(
 	// Add transaction ID if provided
 	transactionID := msg.GetField(parser.TransactionID)
 	if transactionID != "" {
-		response += fmt.Sprintf("|BK%s", transactionID)
+		response += protocol.BuildPrefixedField("BK", transactionID, "|")
 	}
 
 	// Add screen message (AF field)

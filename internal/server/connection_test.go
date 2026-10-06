@@ -1638,3 +1638,49 @@ func TestHandle_FullSIPSequence_TenantSwitchDelimiterMismatch(t *testing.T) {
 		cancel()
 	}
 }
+
+// TestBuildErrorResponse_SanitizesUntrustedInput is an end-to-end regression test
+// for the error-response path, which reflects two kinds of untrusted input back
+// onto the wire: field values echoed from the inbound client message, and the
+// text of processingError, which can carry wrapped FOLIO API error strings.
+//
+// A control character in a field value breaks SIP2 message framing (crashing
+// real SIP2 clients - the reported case was a call number "741.5 KHAN\n741.5
+// KHAN"), and an embedded field delimiter injects a spurious field separator.
+func TestBuildErrorResponse_SanitizesUntrustedInput(t *testing.T) {
+	conn := newBareConnection(t)
+
+	// Inbound client message carrying a newline inside the patron identifier.
+	raw := "2300020250110    081500|AOtest|AA123\n456"
+
+	// A realistic wrapped FOLIO API error: embedded newline AND a literal "|"
+	// from a quoted payload fragment.
+	procErr := fmt.Errorf("folio api error: %w",
+		fmt.Errorf(`request failed {"callNumber":"741.5 KHAN`+"\n"+`741.5 KHAN","id":"a|b"}`))
+
+	resp := conn.buildErrorResponse(raw, procErr)
+	assert.NotEmpty(t, resp, "error response should have been built")
+
+	// (1) The actual client-crash condition: no stray control characters. The
+	// only legitimate one is the single trailing message terminator ("\r").
+	assert.True(t, strings.HasSuffix(resp, "\r"), "response must end with the message terminator")
+	body := strings.TrimSuffix(resp, "\r")
+	assert.NotContains(t, body, "\r", "no carriage return other than the trailing terminator")
+	assert.NotContains(t, resp, "\n", "no line feed anywhere in the response")
+
+	// (2) The echoed client value comes out space-joined instead of breaking the
+	// message into two lines.
+	assert.Contains(t, body, "|AA123 456", "newline in echoed patron id must become a space")
+
+	// (3) The new protection: the "|" inside the error text must NOT inject an
+	// extra field. Assert the structural delimiter count, not substring presence.
+	// This response carries exactly three delimited fields: AO, AA and AF
+	// (no AY/AZ, since the request has no sequence number and error detection is
+	// off for this tenant).
+	assert.Equal(t, 3, strings.Count(body, "|"),
+		"error text containing a literal delimiter must not add a field separator")
+
+	// And the error text survives with the delimiter neutralised to a space.
+	assert.Contains(t, body, `"id":"a b"`, "embedded delimiter should be replaced with a space")
+	assert.Contains(t, body, "|AF", "screen message field must still be present")
+}

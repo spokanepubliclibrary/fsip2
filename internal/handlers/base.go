@@ -12,6 +12,7 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/renewal"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
+	"github.com/spokanepubliclibrary/fsip2/internal/sip2/protocol"
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
 	"go.uber.org/zap"
 )
@@ -455,7 +456,10 @@ func (h *BaseHandler) buildFeeFields(accounts []*models.Account, currency string
 		currency = "USD"
 	}
 
-	return fmt.Sprintf("|BV%.2f|BH%s", totalOutstanding, currency)
+	// BV is a numeric site: assessed as provably safe — a %.2f of a float64 cannot carry a
+	// control character or a field delimiter, so it stays as raw fmt.Sprintf. BH carries a
+	// configured string and is sanitized.
+	return fmt.Sprintf("|BV%.2f", totalOutstanding) + protocol.BuildPrefixedField("BH", currency, "|")
 }
 
 // formatRequestorName formats a requestor's name in "LastName, FirstName" format.

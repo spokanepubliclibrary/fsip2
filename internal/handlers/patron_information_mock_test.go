@@ -390,3 +390,115 @@ func TestPatronInformationHandle_UserNotFound(t *testing.T) {
 
 	mockPatron.AssertExpectations(t)
 }
+
+// ─── Delimiter / control-character injection regression (Patron Information 64) ──
+
+// patronResponseDelimiterCount returns the number of field delimiters in a built
+// patron response, i.e. its structural field count. A FOLIO value carrying an
+// embedded delimiter that reached the wire unsanitized would inflate this count
+// by injecting a spurious field boundary.
+func patronResponseDelimiterCount(response, fieldDelimiter string) int {
+	return strings.Count(response, fieldDelimiter)
+}
+
+// assertPatronFramingClean asserts that a built patron response carries no stray
+// control characters: no '\n' at all, and at most one '\r', which must be the
+// final byte (the legitimate message terminator). SIP2 is line-oriented, so any
+// other control character breaks message framing and crashes SIP2 clients.
+func assertPatronFramingClean(t *testing.T, response string) {
+	t.Helper()
+	assert.NotContains(t, response, "\n",
+		"response must contain no newline - it breaks SIP2 message framing")
+	assert.LessOrEqual(t, strings.Count(response, "\r"), 1,
+		"at most one carriage return (the message terminator) is allowed")
+	if i := strings.Index(response, "\r"); i >= 0 {
+		assert.Equal(t, len(response)-1, i,
+			"any carriage return must be the single trailing terminator")
+	}
+}
+
+// TestPatronInformationHandle_DelimiterAndControlChars_EndToEnd is the end-to-end
+// regression test for the two ways bad FOLIO data corrupts a SIP2 message:
+// control characters break line-oriented message framing (crashing SIP2
+// clients), and the field delimiter appearing inside a value injects a spurious
+// field separator. It drives the real handler path (Handle ->
+// buildPatronInformationResponse -> protocol.BuildPrefixedField ->
+// ResponseBuilder.Build) rather than testing the sanitizer in isolation, using a
+// multi-line postal address (routine in library systems) plus a patron name and
+// email containing a literal '|'.
+func TestPatronInformationHandle_DelimiterAndControlChars_EndToEnd(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+
+	// dirty holds the values as FOLIO might actually store them.
+	dirty := makeTestUser()
+	dirty.Personal.LastName = "Khan|Smith"
+	dirty.Personal.FirstName = "Test"
+	dirty.Personal.Email = "test|patron@example.com"
+	dirty.Personal.Addresses = []models.Address{{
+		AddressLine1:   "741 Main St\n741 Main St",
+		City:           "Spokane",
+		Region:         "WA",
+		PostalCode:     "99201",
+		PrimaryAddress: true,
+	}}
+
+	// clean holds the same values already sanitized. Both responses must contain
+	// the same number of field delimiters; that equality is the structural proof
+	// that the embedded '|' did not create an extra field.
+	clean := makeTestUser()
+	clean.Personal.LastName = "Khan Smith"
+	clean.Personal.FirstName = "Test"
+	clean.Personal.Email = "test patron@example.com"
+	clean.Personal.Addresses = []models.Address{{
+		AddressLine1:   "741 Main St 741 Main St",
+		City:           "Spokane",
+		Region:         "WA",
+		PostalCode:     "99201",
+		PrimaryAddress: true,
+	}}
+
+	run := func(u *models.User) string {
+		t.Helper()
+		sess := testutil.NewAuthSession(tc)
+
+		mockPatron := &MockPatronClient{}
+		mockCirc := &MockCirculationClient{}
+		mockFees := &MockFeesClient{}
+		setupPatronInfoMocks(mockPatron, mockCirc, mockFees, u)
+
+		h := NewPatronInformationHandler(zap.NewNop(), tc)
+		injectMocks(h.BaseHandler, mockPatron, mockCirc, nil, mockFees)
+
+		resp, err := h.Handle(context.Background(), patronInfoMsg(u.Barcode), sess)
+		require.NoError(t, err)
+		return resp
+	}
+
+	dirtyResp := run(dirty)
+	cleanResp := run(clean)
+
+	// 1. Framing: no control characters other than the trailing terminator.
+	assertPatronFramingClean(t, dirtyResp)
+
+	// 2. The embedded newline in the postal address is space-joined.
+	bd, ok := extractSIP2FieldValue(dirtyResp, tc.FieldDelimiter, "BD")
+	require.True(t, ok, "BD (home address) must be present")
+	assert.Equal(t, "741 Main St 741 Main St, Spokane, WA, 99201", bd,
+		"an embedded newline in addressLine1 must become a space")
+
+	// 3. The embedded '|' must not inject an extra field boundary.
+	assert.Equal(t,
+		patronResponseDelimiterCount(cleanResp, tc.FieldDelimiter),
+		patronResponseDelimiterCount(dirtyResp, tc.FieldDelimiter),
+		"an embedded field delimiter must not add a field boundary to the response")
+
+	ae, ok := extractSIP2FieldValue(dirtyResp, tc.FieldDelimiter, "AE")
+	require.True(t, ok, "AE (personal name) must be present")
+	assert.Equal(t, "Khan Smith, Test", ae,
+		"an embedded '|' in the patron name must be neutralized, not split the field")
+
+	be, ok := extractSIP2FieldValue(dirtyResp, tc.FieldDelimiter, "BE")
+	require.True(t, ok, "BE (email) must be present")
+	assert.Equal(t, "test patron@example.com", be,
+		"an embedded '|' in the email must be neutralized, not split the field")
+}

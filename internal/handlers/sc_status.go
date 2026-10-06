@@ -118,12 +118,12 @@ func (h *SCStatusHandler) buildACSStatusResponse(session *types.Session, sequenc
 	)
 
 	// Add variable fields
-	content += fmt.Sprintf("|AO%s", institutionID)
-	content += fmt.Sprintf("|AM%s", libraryName)
-	content += fmt.Sprintf("|BX%s", supportedMessages)
+	content += protocol.BuildPrefixedField("AO", institutionID, "|")
+	content += protocol.BuildPrefixedField("AM", libraryName, "|")
+	content += protocol.BuildPrefixedField("BX", supportedMessages, "|")
 
 	if terminalLocation != "" {
-		content += fmt.Sprintf("|AN%s", terminalLocation)
+		content += protocol.BuildPrefixedField("AN", terminalLocation, "|")
 	}
 
 	// Create builder with session's tenant config for proper error detection settings

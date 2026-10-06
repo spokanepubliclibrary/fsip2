@@ -167,6 +167,41 @@ func TestItem_GetEffectiveCallNumber_Empty(t *testing.T) {
 	}
 }
 
+// TestItem_GetEffectiveCallNumber_PreservesControlCharacters is a deliberate
+// design-intent test: GetEffectiveCallNumber must return the RAW,
+// unsanitized FOLIO value, control characters and all.
+//
+// Sanitization of embedded control characters (e.g. the real-world FOLIO bug
+// where callNumber arrived as "741.5 KHAN\n741.5 KHAN") is a wire-protocol
+// concern, applied only at SIP2 field-building time via
+// internal/sip2/protocol.BuildField (which calls helpers.SanitizeString).
+// Logging and other internal consumers of the model layer must still see the
+// true source data from FOLIO.
+//
+// DO NOT "fix" this by sanitizing inside GetEffectiveCallNumber or anywhere
+// else in this model layer — that would silently double-handle the bug,
+// diverge model-layer data from what FOLIO actually sent, and defeat the
+// purpose of keeping sanitization isolated to the wire-building step.
+func TestItem_GetEffectiveCallNumber_PreservesControlCharacters(t *testing.T) {
+	const dirty = "741.5 KHAN\n741.5 KHAN"
+	item := &Item{
+		EffectiveCallNumberComponents: CallNumberComponents{
+			CallNumber: dirty,
+		},
+	}
+	got := item.GetEffectiveCallNumber()
+	if got != dirty {
+		t.Errorf("GetEffectiveCallNumber() = %q, want raw unsanitized %q (model layer must not sanitize; that is a wire-protocol concern handled in internal/sip2/protocol.BuildField)", got, dirty)
+	}
+
+	// Fallback-to-CallNumber path must preserve control characters too.
+	fallbackItem := &Item{CallNumber: "\n741.5 KHAN"}
+	got = fallbackItem.GetEffectiveCallNumber()
+	if got != "\n741.5 KHAN" {
+		t.Errorf("GetEffectiveCallNumber() fallback path = %q, want raw unsanitized %q", got, "\n741.5 KHAN")
+	}
+}
+
 // --- Item.GetTitle ---
 
 func TestItem_GetTitle_FromItem(t *testing.T) {

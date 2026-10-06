@@ -81,8 +81,8 @@ func (h *EndSessionHandler) buildEndSessionResponse(ok bool, institutionID, patr
 	)
 
 	// Add variable fields
-	response += fmt.Sprintf("|AO%s", institutionID)
-	response += fmt.Sprintf("|AA%s", patronIdentifier)
+	response += protocol.BuildPrefixedField("AO", institutionID, "|")
+	response += protocol.BuildPrefixedField("AA", patronIdentifier, "|")
 
 	// Add screen message
 	if ok {

@@ -178,17 +178,17 @@ func (b *ResponseBuilder) BuildCheckoutResponse(
 		content += protocol.BuildField(string(parser.DueDate), protocol.FormatSIP2DateTime(dueDate, b.config.Timezone), delimiter)
 	}
 
-	content += protocol.BuildOptionalField(string(parser.FeeType), feeType, delimiter)
+	content += protocol.BuildField(string(parser.FeeType), feeType, delimiter)
 
 	if securityInhibit {
 		content += "CI" + "Y" + delimiter
 	}
 
-	content += protocol.BuildOptionalField(string(parser.CurrencyType), currencyType, delimiter)
-	content += protocol.BuildOptionalField(string(parser.FeeAmount), feeAmount, delimiter)
-	content += protocol.BuildOptionalField(string(parser.MediaType), mediaType, delimiter)
-	content += protocol.BuildOptionalField("BV", itemProperties, delimiter) // Item properties
-	content += protocol.BuildOptionalField(string(parser.TransactionID), transactionID, delimiter)
+	content += protocol.BuildField(string(parser.CurrencyType), currencyType, delimiter)
+	content += protocol.BuildField(string(parser.FeeAmount), feeAmount, delimiter)
+	content += protocol.BuildField(string(parser.MediaType), mediaType, delimiter)
+	content += protocol.BuildField("BV", itemProperties, delimiter) // Item properties
+	content += protocol.BuildField(string(parser.TransactionID), transactionID, delimiter)
 
 	// Add screen messages
 	for _, msg := range screenMessage {
@@ -319,10 +319,10 @@ func (b *ResponseBuilder) BuildCheckinResponse(
 	content += protocol.BuildField(string(parser.ItemIdentifier), itemID, delimiter)
 
 	// AQ - Permanent location (always include, even if blank per SIP2 spec)
-	content += string(parser.PermanentLocation) + permanentLocation + delimiter
+	content += protocol.BuildRequiredField(string(parser.PermanentLocation), permanentLocation, delimiter)
 
 	// AP - Current location (always include, even if blank)
-	content += string(parser.CurrentLocation) + currentLocation + delimiter
+	content += protocol.BuildRequiredField(string(parser.CurrentLocation), currentLocation, delimiter)
 
 	// AJ - Title identifier (always include, with fallback to item barcode)
 	if titleID != "" {
@@ -332,28 +332,28 @@ func (b *ResponseBuilder) BuildCheckinResponse(
 	}
 
 	// CK - Media type (SIP2 code) (always include, even if blank)
-	content += string(parser.MediaType) + mediaType + delimiter
+	content += protocol.BuildRequiredField(string(parser.MediaType), mediaType, delimiter)
 
 	// CH - Material type (plain text) (always include, even if blank)
-	content += string(parser.CurrentItemType) + materialType + delimiter
+	content += protocol.BuildRequiredField(string(parser.CurrentItemType), materialType, delimiter)
 
 	// CS - Call number (always include, even if blank)
-	content += string(parser.CallNumber) + callNumber + delimiter
+	content += protocol.BuildRequiredField(string(parser.CallNumber), callNumber, delimiter)
 
 	// CV - Alert type (always include, even if blank)
-	content += string(parser.AlertType) + alertType + delimiter
+	content += protocol.BuildRequiredField(string(parser.AlertType), alertType, delimiter)
 
 	// CT - Destination/routing location (always include, even if blank)
-	content += string(parser.PickupServicePoint) + destinationLocation + delimiter
+	content += protocol.BuildRequiredField(string(parser.PickupServicePoint), destinationLocation, delimiter)
 
 	// CL - Sort bin (optional)
-	content += protocol.BuildOptionalField("CL", sortBin, delimiter)
+	content += protocol.BuildField("CL", sortBin, delimiter)
 
 	// AA - Patron identifier (optional)
-	content += protocol.BuildOptionalField(string(parser.PatronIdentifier), patronID, delimiter)
+	content += protocol.BuildField(string(parser.PatronIdentifier), patronID, delimiter)
 
 	// BV - Item properties (optional)
-	content += protocol.BuildOptionalField("BV", itemProperties, delimiter)
+	content += protocol.BuildField("BV", itemProperties, delimiter)
 
 	// AG - Checkin notes (optional, repeatable)
 	for _, note := range checkinNotes {
@@ -453,9 +453,9 @@ func (b *ResponseBuilder) BuildPatronInformationResponse(
 		content += protocol.BuildField(string(parser.ValidPatronPassword), "Y", delimiter)
 	}
 
-	content += protocol.BuildOptionalField(string(parser.CurrencyType), currencyType, delimiter)
-	content += protocol.BuildOptionalField(string(parser.FeeAmount), feeAmount, delimiter)
-	content += protocol.BuildOptionalField("CC", feeLimit, delimiter)
+	content += protocol.BuildField(string(parser.CurrencyType), currencyType, delimiter)
+	content += protocol.BuildField(string(parser.FeeAmount), feeAmount, delimiter)
+	content += protocol.BuildField("CC", feeLimit, delimiter)
 
 	// Add item lists
 	for _, item := range holdItems {
@@ -478,9 +478,9 @@ func (b *ResponseBuilder) BuildPatronInformationResponse(
 	}
 
 	// Add patron details
-	content += protocol.BuildOptionalField(string(parser.HomeAddress), homeAddress, delimiter)
-	content += protocol.BuildOptionalField(string(parser.EmailAddress), emailAddress, delimiter)
-	content += protocol.BuildOptionalField(string(parser.HomePhoneNumber), homePhoneNumber, delimiter)
+	content += protocol.BuildField(string(parser.HomeAddress), homeAddress, delimiter)
+	content += protocol.BuildField(string(parser.EmailAddress), emailAddress, delimiter)
+	content += protocol.BuildField(string(parser.HomePhoneNumber), homePhoneNumber, delimiter)
 
 	// Add screen messages
 	for _, msg := range screenMessage {
@@ -531,9 +531,9 @@ func (b *ResponseBuilder) BuildACSStatusResponse(
 	delimiter := b.config.FieldDelimiter
 
 	content += protocol.BuildField(string(parser.InstitutionID), institutionID, delimiter)
-	content += protocol.BuildOptionalField(string(parser.LibraryName), libraryName, delimiter)
+	content += protocol.BuildField(string(parser.LibraryName), libraryName, delimiter)
 	content += protocol.BuildField("BX", supportedMessages, delimiter) // Supported messages
-	content += protocol.BuildOptionalField(string(parser.TerminalLocation), terminalLocation, delimiter)
+	content += protocol.BuildField(string(parser.TerminalLocation), terminalLocation, delimiter)
 
 	// Add screen messages
 	for _, msg := range screenMessage {

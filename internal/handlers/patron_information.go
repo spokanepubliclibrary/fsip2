@@ -486,15 +486,15 @@ func (h *PatronInformationHandler) buildPatronInformationResponse(
 	)
 
 	// Add variable fields
-	response += fmt.Sprintf("|AO%s", institutionID)
-	response += fmt.Sprintf("|AA%s", patronIdentifier)
+	response += protocol.BuildPrefixedField("AO", institutionID, "|")
+	response += protocol.BuildPrefixedField("AA", patronIdentifier, "|")
 
 	if valid && user != nil {
 		// Add patron name using helper (consolidates duplicated logic)
 		if u, ok := user.(*models.User); ok {
 			usePreferred := session.TenantConfig.IsPreferredFirstNameEnabled("63", "AE")
 			patronName := h.formatPatronName(u, usePreferred)
-			response += fmt.Sprintf("|AE%s", patronName)
+			response += protocol.BuildPrefixedField("AE", patronName, "|")
 
 			// Add contact information fields
 			// BD - Primary address
@@ -523,34 +523,34 @@ func (h *PatronInformationHandler) buildPatronInformationResponse(
 						}
 						address += part
 					}
-					response += fmt.Sprintf("|BD%s", address)
+					response += protocol.BuildPrefixedField("BD", address, "|")
 				}
 			}
 
 			// BE - Email
 			if u.Personal.Email != "" {
-				response += fmt.Sprintf("|BE%s", u.Personal.Email)
+				response += protocol.BuildPrefixedField("BE", u.Personal.Email, "|")
 			}
 
 			// BF - Phone (configurable)
 			if session.TenantConfig.IsFieldEnabled("63", "BF") && u.Personal.Phone != "" {
-				response += fmt.Sprintf("|BF%s", u.Personal.Phone)
+				response += protocol.BuildPrefixedField("BF", u.Personal.Phone, "|")
 			}
 
 			// BG - Mobile Phone (configurable)
 			if session.TenantConfig.IsFieldEnabled("63", "BG") && u.Personal.MobilePhone != "" {
-				response += fmt.Sprintf("|BG%s", u.Personal.MobilePhone)
+				response += protocol.BuildPrefixedField("BG", u.Personal.MobilePhone, "|")
 			}
 
 			// PC - Patron Group UUID (configurable)
 			if session.TenantConfig.IsFieldEnabled("63", "PC") && u.PatronGroup != "" {
-				response += fmt.Sprintf("|PC%s", u.PatronGroup)
+				response += protocol.BuildPrefixedField("PC", u.PatronGroup, "|")
 			}
 
 			// PB - Birthdate in MMDDYYYY format (configurable)
 			if session.TenantConfig.IsFieldEnabled("63", "PB") && u.Personal.DateOfBirth != nil {
 				birthdate := u.Personal.DateOfBirth.Format("01022006")
-				response += fmt.Sprintf("|PB%s", birthdate)
+				response += protocol.BuildPrefixedField("PB", birthdate, "|")
 			}
 		}
 
@@ -558,12 +558,12 @@ func (h *PatronInformationHandler) buildPatronInformationResponse(
 		if patronGroup != nil {
 			// FU - Patron Group name (configurable)
 			if session.TenantConfig.IsFieldEnabled("63", "FU") && patronGroup.Group != "" {
-				response += fmt.Sprintf("|FU%s", patronGroup.Group)
+				response += protocol.BuildPrefixedField("FU", patronGroup.Group, "|")
 			}
 
 			// FV - Patron Group description (configurable)
 			if session.TenantConfig.IsFieldEnabled("63", "FV") && patronGroup.Desc != "" {
-				response += fmt.Sprintf("|FV%s", patronGroup.Desc)
+				response += protocol.BuildPrefixedField("FV", patronGroup.Desc, "|")
 			}
 		}
 
@@ -589,7 +589,7 @@ func (h *PatronInformationHandler) buildPatronInformationResponse(
 	if includeHolds && len(holds) > 0 {
 		for _, hold := range holds {
 			if hold.Item != nil && hold.Item.Barcode != "" {
-				response += fmt.Sprintf("|AS%s", hold.Item.Barcode)
+				response += protocol.BuildPrefixedField("AS", hold.Item.Barcode, "|")
 			}
 		}
 	}
@@ -599,7 +599,7 @@ func (h *PatronInformationHandler) buildPatronInformationResponse(
 	if includeOverdue && len(overdueLoans) > 0 {
 		for _, loan := range overdueLoans {
 			if loan.Item != nil && loan.Item.Barcode != "" {
-				response += fmt.Sprintf("|AT%s", loan.Item.Barcode)
+				response += protocol.BuildPrefixedField("AT", loan.Item.Barcode, "|")
 			}
 		}
 	}
@@ -609,7 +609,7 @@ func (h *PatronInformationHandler) buildPatronInformationResponse(
 	if includeCharged && len(loans) > 0 {
 		for _, loan := range loans {
 			if loan.Item != nil && loan.Item.Barcode != "" {
-				response += fmt.Sprintf("|AU%s", loan.Item.Barcode)
+				response += protocol.BuildPrefixedField("AU", loan.Item.Barcode, "|")
 			}
 		}
 	}
@@ -620,9 +620,9 @@ func (h *PatronInformationHandler) buildPatronInformationResponse(
 	if includeUnavailableHolds && session.TenantConfig.IsFieldEnabled("63", "CD") && len(unavailableHolds) > 0 {
 		for _, hold := range unavailableHolds {
 			if hold.Item != nil && hold.Item.Barcode != "" {
-				response += fmt.Sprintf("|CD%s", hold.Item.Barcode)
+				response += protocol.BuildPrefixedField("CD", hold.Item.Barcode, "|")
 			} else if hold.InstanceID != "" {
-				response += fmt.Sprintf("|CD%s", hold.InstanceID)
+				response += protocol.BuildPrefixedField("CD", hold.InstanceID, "|")
 			}
 		}
 	}
@@ -644,7 +644,7 @@ func (h *PatronInformationHandler) buildPatronInformationResponse(
 			// Format: accountID remaining "feeFineType" title
 			// FeeFineType is always quoted, title can be blank
 			avValue := fmt.Sprintf("%s %s \"%s\" %s", account.ID, remainingStr, account.FeeFineType, title)
-			response += fmt.Sprintf("|AV%s", avValue)
+			response += protocol.BuildPrefixedField("AV", avValue, "|")
 		}
 	}
 

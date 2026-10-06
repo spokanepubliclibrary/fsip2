@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio"
+	"github.com/spokanepubliclibrary/fsip2/internal/helpers"
 	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
@@ -205,7 +205,7 @@ func (h *RenewHandler) Handle(ctx context.Context, msg *parser.Message, session 
 			h.logger.Warn("Failed to fetch instance title for renewal response",
 				zap.String("instance_id", instanceID), zap.Error(err))
 		} else {
-			instanceTitle = truncateString(instance.Title, 60)
+			instanceTitle = helpers.TruncateString(instance.Title, 60)
 		}
 	}
 	return h.buildRenewResponse(true, institutionID, patronIdentifier, itemIdentifier, dueDate, instanceTitle, msg, session.TenantConfig), nil
@@ -248,13 +248,17 @@ func (h *RenewHandler) buildRenewResponseWithError(ok bool, institutionID, patro
 	if err != nil {
 		h.logger.Error("Failed to build renewal error response", zap.Error(err))
 		// Fallback to basic response
-		return fmt.Sprintf("30NN  %s|AO%s|AA%s|AB%s|AF%s",
-			protocol.FormatSIP2DateTime(time.Now(), "    "),
-			institutionID,
-			patronIdentifier,
-			itemIdentifier,
-			errorMessage,
-		)
+		// The fixed-length header (code, status flags and the positional
+		// timestamp) is positional, not delimiter-framed, so it is emitted
+		// verbatim. Every data-carrying field goes through the protocol builder:
+		// this path interpolates client-supplied identifiers and wrapped error
+		// text, so an embedded control character or field delimiter would break
+		// SIP2 framing or inject a spurious field.
+		return "30NN  " + protocol.FormatSIP2DateTime(time.Now(), "    ") +
+			protocol.BuildPrefixedField("AO", institutionID, "|") +
+			protocol.BuildPrefixedField("AA", patronIdentifier, "|") +
+			protocol.BuildPrefixedField("AB", itemIdentifier, "|") +
+			protocol.BuildPrefixedField("AF", errorMessage, "|")
 	}
 
 	return response
@@ -315,12 +319,15 @@ func (h *RenewHandler) buildRenewResponse(ok bool, institutionID, patronIdentifi
 	if err != nil {
 		h.logger.Error("Failed to build renewal response", zap.Error(err))
 		// Fallback to basic response
-		return fmt.Sprintf("30NN  %s|AO%s|AA%s|AB%s|AFRenewal failed - internal error",
-			protocol.FormatSIP2DateTime(time.Now(), "    "),
-			institutionID,
-			patronIdentifier,
-			itemIdentifier,
-		)
+		// Same shape as buildRenewResponseWithError's fallback: the fixed-length
+		// header is emitted verbatim, the data-carrying fields go through the
+		// protocol builder. AF is a constant here, but is built the same way so
+		// the whole response has one form.
+		return "30NN  " + protocol.FormatSIP2DateTime(time.Now(), "    ") +
+			protocol.BuildPrefixedField("AO", institutionID, "|") +
+			protocol.BuildPrefixedField("AA", patronIdentifier, "|") +
+			protocol.BuildPrefixedField("AB", itemIdentifier, "|") +
+			protocol.BuildPrefixedField("AF", "Renewal failed - internal error", "|")
 	}
 
 	return response
