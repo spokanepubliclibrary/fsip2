@@ -33,8 +33,9 @@
 // # Field Construction
 //
 // The builder uses helper functions from the protocol package:
-//   - protocol.BuildField(code, value, delimiter) - adds field with delimiter
-//   - protocol.BuildOptionalField(code, value, delimiter) - adds field only if value is not empty
+//   - protocol.BuildField(code, value, delimiter) - adds field with delimiter;
+//     the field is omitted when the value is empty or sanitizes to empty, so
+//     this also covers optional fields
 //   - protocol.BuildYNField(bool) - converts boolean to "Y" or "N"
 //   - protocol.FormatSIP2DateTime(time, timezone) - formats time in SIP2 format (YYYYMMDD    HHMMSS)
 //

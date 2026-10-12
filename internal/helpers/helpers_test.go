@@ -257,21 +257,34 @@ func TestGenerateID(t *testing.T) {
 
 func TestTruncateString(t *testing.T) {
 	testCases := []struct {
+		name     string
 		input    string
 		maxLen   int
 		expected string
 	}{
-		{"hello", 10, "hello"},
-		{"hello world", 5, "hello"},
-		{"test", 4, "test"},
-		{"", 5, ""},
+		{"shorter than maxLen", "hello", 10, "hello"},
+		{"plain ASCII truncation", "hello world", 5, "hello"},
+		{"exact boundary ASCII", "test", 4, "test"},
+		{"empty string", "", 5, ""},
+		{"maxLen zero", "hello", 0, ""},
+		// Same contract asserted by the handlers package: truncation lands on a
+		// rune boundary, never mid-character.
+		{"multi-byte truncated on rune boundary", "Café résumé naïve 日本語 中文", 20, "Café résumé naïve 日本"},
+		// 8 runes but 24 bytes: under maxLen runes, over maxLen bytes, so it must
+		// come back intact rather than being sliced by byte offset.
+		{"under maxLen runes but over maxLen bytes", "日本語 中文 한국어", 10, "日本語 中文 한국어"},
 	}
 
 	for _, tc := range testCases {
-		result := TruncateString(tc.input, tc.maxLen)
-		if result != tc.expected {
-			t.Errorf("TruncateString(%s, %d) = %s, expected %s", tc.input, tc.maxLen, result, tc.expected)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			result := TruncateString(tc.input, tc.maxLen)
+			if result != tc.expected {
+				t.Errorf("TruncateString(%q, %d) = %q, expected %q", tc.input, tc.maxLen, result, tc.expected)
+			}
+			if len([]rune(result)) > tc.maxLen {
+				t.Errorf("TruncateString(%q, %d) returned %d runes, exceeds maxLen", tc.input, tc.maxLen, len([]rune(result)))
+			}
+		})
 	}
 }
 
@@ -315,19 +328,220 @@ func TestPadLeft(t *testing.T) {
 
 func TestSanitizeString(t *testing.T) {
 	testCases := []struct {
+		name     string
 		input    string
 		expected string
 	}{
-		{"hello", "hello"},
-		{"hello\x00world", "helloworld"},
-		{"test\n\ttab", "test\n\ttab"},
-		{"control\x01char", "controlchar"},
+		{"clean text unchanged", "clean text", "clean text"},
+		{"no control chars at all", "hello", "hello"},
+		{"embedded newline in call number", "741.5 KHAN\n741.5 KHAN", "741.5 KHAN 741.5 KHAN"},
+		{"leading newline", "\n741.5 KHAN", "741.5 KHAN"},
+		{"control char with adjacent spaces", "A \n B", "A B"},
+		{"crlf is one run", "A\r\nB", "A B"},
+		{"null byte", "A\x00B", "A B"},
+		{"real double space preserved", "A  B", "A  B"},
+		{"embedded tab", "test\ttab", "test tab"},
+		{"tab with adjacent spaces", "test \t tab", "test tab"},
+		{"other control char", "control\x01char", "control char"},
+		{"del char", "control\x7fchar", "control char"},
+		{"trailing control chars", "abc\n\r", "abc"},
+		{"trailing control char with space", "abc \n", "abc"},
+		{"several separate runs", "a\nb\tc\rd", "a b c d"},
+		{"multiple runs with spaces", "a \n b  c\t\td", "a b  c d"},
+		{"empty string", "", ""},
+		{"only control chars", "\n\r\t\x00", ""},
+		{"only spaces and control chars", " \n ", ""},
+		{"multi-byte utf8 preserved", "café ünïcode 日本語", "café ünïcode 日本語"},
+		{"multi-byte utf8 with control char", "café\nünïcode", "café ünïcode"},
+		{"accented multi-byte around control char", "Café\nrésumé", "Café résumé"},
+		{"trailing newline only", "741.5 KHAN\n", "741.5 KHAN"},
+		{"leading control char with space", "\n abc", "abc"},
+		{"only control chars, two", "\n\n", ""},
+		{"trailing space preserved, no control chars", "abc ", "abc "},
+		{"leading space preserved, no control chars", " abc", " abc"},
+		{"spaces only, no control chars, preserved", "  ", "  "},
+		{"edge spaces preserved when no control chars", "  A  B  ", "  A  B  "},
 	}
 
 	for _, tc := range testCases {
 		result := SanitizeString(tc.input)
 		if result != tc.expected {
-			t.Errorf("SanitizeString(%q) = %q, expected %q", tc.input, result, tc.expected)
+			t.Errorf("%s: SanitizeString(%q) = %q, expected %q", tc.name, tc.input, result, tc.expected)
+		}
+	}
+}
+
+// TestSanitizeString_NoControlCharsIsIdentity asserts the core invariant of
+// SanitizeString: input containing no control characters is returned
+// byte-identical, so values that were never part of the control-character bug
+// (including ones with meaningful leading or trailing spaces) are untouched.
+func TestSanitizeString_NoControlCharsIsIdentity(t *testing.T) {
+	inputs := []string{
+		"",
+		" ",
+		"  ",
+		"      ",
+		"abc",
+		"abc ",
+		" abc",
+		" abc ",
+		"  A  B  ",
+		"A  B",
+		"This is a very long title that exceeds sixty characters and ",
+		"741.5 KHAN",
+		"café ünïcode 日本語",
+		" café ünïcode 日本語 ",
+		"Café résumé",
+	}
+
+	for _, in := range inputs {
+		if got := SanitizeString(in); got != in {
+			t.Errorf("SanitizeString(%q) = %q, expected the input unchanged", in, got)
+		}
+	}
+}
+
+func TestSanitizeFieldValue(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value string
+		delim string
+		want  string
+	}{
+		// Delimiter neutralization: replaced with a space, never stripped, so
+		// tokens that were visually distinct stay distinct.
+		{"delimiter in the middle", "741.5|KHAN", "|", "741.5 KHAN"},
+		{"multiple delimiter occurrences", "A|B|C", "|", "A B C"},
+		{"consecutive delimiters", "A||B", "|", "A  B"},
+		{"delimiter at start", "|AB", "|", " AB"},
+		{"delimiter at end", "AB|", "|", "AB "},
+		{"value is only the delimiter", "|", "|", " "},
+		{"delimiter with unicode value", "café|日本語", "|", "café 日本語"},
+
+		// Delimiter pass runs BEFORE SanitizeString, so the space it introduces
+		// is absorbed by the adjacent control-character run (not "A  B").
+		{"delimiter plus control char", "A|\nB", "|", "A B"},
+		{"delimiter adjacent to CRLF", "741.5|KHAN\r\n741.5 KHAN", "|", "741.5 KHAN 741.5 KHAN"},
+
+		// Multi-character delimiters.
+		{"multi-char delimiter", "A||B", "||", "A B"},
+		{"multi-char delimiter leaves single char alone", "A|B", "||", "A|B"},
+		{"CRLF delimiter", "A\r\nB", "\r\n", "A B"},
+
+		// A delimiter that is itself a control character: both passes apply.
+		{"CR delimiter", "A\rB", "\r", "A B"},
+		{"CR delimiter leaves LF to SanitizeString", "A\r\nB", "\r", "A B"},
+
+		// No delimiter and no control characters: byte-identical.
+		{"clean value", "741.5 KHAN", "|", "741.5 KHAN"},
+		{"clean value with interior double space", "A  B", "|", "A  B"},
+		{"clean value with edge spaces", " abc ", "|", " abc "},
+		{"clean unicode value", "Café résumé", "|", "Café résumé"},
+		{"empty value", "", "|", ""},
+
+		// Control characters alone still follow SanitizeString's policy.
+		{"control chars only", "\n\r", "|", ""},
+		{"interior control run", "741.5 KHAN\n741.5 KHAN", "|", "741.5 KHAN 741.5 KHAN"},
+
+		// REGRESSION: an empty delimiter must be a no-op for the delimiter pass.
+		// strings.ReplaceAll(s, "", " ") inserts a space between every character,
+		// which would corrupt every field of every message.
+		{"empty delimiter is a no-op", "ABC", "", "ABC"},
+		{"empty delimiter does not space out a sentence", "741.5 KHAN", "", "741.5 KHAN"},
+		{"empty delimiter preserves pipes", "A|B|C", "", "A|B|C"},
+		{"empty delimiter still sanitizes control chars", "A\nB", "", "A B"},
+		{"empty delimiter with unicode", "café ünïcode 日本語", "", "café ünïcode 日本語"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SanitizeFieldValue(tc.value, tc.delim); got != tc.want {
+				t.Errorf("SanitizeFieldValue(%q, %q) = %q, want %q", tc.value, tc.delim, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSanitizeFieldValue_EmptyDelimiterNeverExpands is an explicit guard against
+// the strings.ReplaceAll(s, "", " ") trap: with an empty delimiter the result
+// must never be longer than SanitizeString's own output.
+func TestSanitizeFieldValue_EmptyDelimiterNeverExpands(t *testing.T) {
+	inputs := []string{
+		"",
+		"A",
+		"ABC",
+		"741.5 KHAN",
+		"A|B|C",
+		"Café résumé",
+		"A\nB",
+	}
+
+	for _, in := range inputs {
+		want := SanitizeString(in)
+		if got := SanitizeFieldValue(in, ""); got != want {
+			t.Errorf("SanitizeFieldValue(%q, \"\") = %q, want %q (must equal SanitizeString)", in, got, want)
+		}
+	}
+}
+
+// TestSanitizeFieldValue_CleanValueIsIdentity documents the invariant: a value
+// with no control characters and no occurrence of the configured delimiter is
+// returned byte-identical.
+func TestSanitizeFieldValue_CleanValueIsIdentity(t *testing.T) {
+	inputs := []string{
+		"",
+		" ",
+		"  ",
+		"abc",
+		"abc ",
+		" abc",
+		" abc ",
+		"  A  B  ",
+		"A  B",
+		"741.5 KHAN",
+		"café ünïcode 日本語",
+		"Café résumé",
+	}
+
+	for _, in := range inputs {
+		for _, delim := range []string{"|", "||", "\r\n", "\r", "^", ""} {
+			if got := SanitizeFieldValue(in, delim); got != in {
+				t.Errorf("SanitizeFieldValue(%q, %q) = %q, expected the input unchanged", in, delim, got)
+			}
+		}
+	}
+}
+
+func TestSanitizeFixedWidthString(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"clean text unchanged", "clean text", "clean text"},
+		{"newline becomes space", "741.5 KHAN\n741.5 KHAN", "741.5 KHAN 741.5 KHAN"},
+		{"leading newline becomes space", "\n741.5 KHAN", " 741.5 KHAN"},
+		{"crlf becomes two spaces", "A\r\nB", "A  B"},
+		{"null byte", "A\x00B", "A B"},
+		{"tab", "A\tB", "A B"},
+		{"del char", "A\x7fB", "A B"},
+		{"patron status block preserved", "Y             ", "Y             "},
+		{"patron status block with control char", "Y    \n       ", "Y            "},
+		{"leading and trailing spaces preserved", "  mid  ", "  mid  "},
+		{"spaces not collapsed", "A  B", "A  B"},
+		{"all control chars", "\n\r\t\x00", "    "},
+		{"empty string", "", ""},
+		{"multi-byte utf8 preserved", "café ünïcode", "café ünïcode"},
+	}
+
+	for _, tc := range testCases {
+		result := SanitizeFixedWidthString(tc.input)
+		if result != tc.expected {
+			t.Errorf("%s: SanitizeFixedWidthString(%q) = %q, expected %q", tc.name, tc.input, result, tc.expected)
+		}
+		if len(result) != len(tc.input) {
+			t.Errorf("%s: SanitizeFixedWidthString(%q) changed length: got %d, expected %d",
+				tc.name, tc.input, len(result), len(tc.input))
 		}
 	}
 }

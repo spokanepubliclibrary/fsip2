@@ -828,3 +828,149 @@ func TestBuildItemInformationResponse_DA_NameInResponse(t *testing.T) {
 		})
 	}
 }
+
+// extractSIP2FieldValue pulls the value of a single-occurrence field (e.g. "CS")
+// out of a built SIP2 response by splitting on the field delimiter, exactly as
+// internal/sip2/protocol.ParseFields does. Returns ("", false) if the field is
+// absent. Panics-free and suitable for asserting on sanitized field content.
+func extractSIP2FieldValue(response, fieldDelimiter, fieldCode string) (string, bool) {
+	for _, part := range strings.Split(response, fieldDelimiter) {
+		if len(part) >= 2 && part[0:2] == fieldCode {
+			return part[2:], true
+		}
+	}
+	return "", false
+}
+
+// TestBuildItemInformationResponse_CallNumberControlChars_EndToEnd is the
+// end-to-end regression test for the embedded-control-character bug: a FOLIO
+// item whose call number contains raw control characters (the real reported
+// case was callNumber "741.5 KHAN\n741.5 KHAN") must never let those control
+// characters reach the wire, because SIP2 is line-oriented and an embedded
+// newline breaks message framing for the SIP2 client. This drives the real
+// handler path (prepareItemResponseData -> item.GetEffectiveCallNumber ->
+// ResponseBuilder.BuildItemInformationResponse -> protocol.BuildField) rather
+// than testing helpers.SanitizeString or BuildField in isolation.
+func TestBuildItemInformationResponse_CallNumberControlChars_EndToEnd(t *testing.T) {
+	t.Parallel()
+
+	tc := &config.TenantConfig{
+		Tenant:                   "test-tenant",
+		MessageDelimiter:         "\r",
+		FieldDelimiter:           "|",
+		Charset:                  "UTF-8",
+		CirculationStatusMapping: map[string]string{},
+	}
+
+	tests := []struct {
+		name           string
+		callNumber     string // EffectiveCallNumberComponents.CallNumber
+		wantCSPresent  bool
+		wantCSValue    string
+		wantCSAbsentOK bool // when true, wantCSPresent is false and that's the assertion
+	}{
+		{
+			// Real reported bug case: interior embedded newline between two
+			// otherwise-valid call number halves.
+			name:          "interior newline collapses to single space",
+			callNumber:    "741.5 KHAN\n741.5 KHAN",
+			wantCSPresent: true,
+			wantCSValue:   "741.5 KHAN 741.5 KHAN",
+		},
+		{
+			// Real reported bug case: itemLevelCallNumber value with a leading
+			// newline. A control run at the start contributes no space.
+			name:          "leading newline yields no leading space",
+			callNumber:    "\n741.5 KHAN",
+			wantCSPresent: true,
+			wantCSValue:   "741.5 KHAN",
+		},
+		{
+			// The subtlest case: a call number that is nothing but control
+			// characters sanitizes to "", so BuildField's empty-value check
+			// must omit the CS field entirely rather than emit CS followed by
+			// garbage (or a bare delimiter-only token).
+			name:           "all-control-character call number omits CS field entirely",
+			callNumber:     "\n\n\x01\x02",
+			wantCSPresent:  false,
+			wantCSAbsentOK: true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := NewItemInformationHandler(zap.NewNop(), tc)
+			session := types.NewSession("cs-sanitize-test", tc)
+
+			item := &models.Item{
+				ID:      "item-cs-001",
+				Barcode: "ITEM-CS-001",
+				Status:  models.ItemStatus{Name: "Available"},
+				EffectiveCallNumberComponents: models.CallNumberComponents{
+					CallNumber: tt.callNumber,
+				},
+			}
+
+			resp := h.buildItemInformationResponse(
+				session, item, "INST01", "ITEM-CS-001",
+				nil, nil, "", nil, "", "", true,
+			)
+
+			// The crash condition: no embedded \n anywhere, and the only \r in
+			// the entire response is the single message-terminator byte at the
+			// very end. Any other \r or any \n would break SIP2 line framing.
+			if strings.Contains(resp, "\n") {
+				t.Errorf("response must not contain any \\n (breaks SIP2 framing): %q", resp)
+			}
+			if got := strings.Count(resp, "\r"); got != 1 {
+				t.Errorf("response must contain exactly one \\r (the message terminator), got %d: %q", got, resp)
+			}
+			if !strings.HasSuffix(resp, "\r") {
+				t.Errorf("the single \\r must be the trailing message terminator: %q", resp)
+			}
+
+			csValue, present := extractSIP2FieldValue(resp, tc.FieldDelimiter, "CS")
+			if tt.wantCSPresent {
+				if !present {
+					t.Fatalf("expected CS field to be present, got none in response: %q", resp)
+				}
+				if csValue != tt.wantCSValue {
+					t.Errorf("CS field value = %q, want %q (full response: %q)", csValue, tt.wantCSValue, resp)
+				}
+			} else if tt.wantCSAbsentOK && present {
+				t.Errorf("expected CS field to be absent (value sanitizes to empty), but found CS%q in response: %q", csValue, resp)
+			}
+		})
+	}
+}
+
+// TestPrepareItemResponseData_CallNumberIsRawUnsanitized documents that
+// prepareItemResponseData.callNumber (sourced from item.GetEffectiveCallNumber)
+// carries the raw FOLIO value, including any control characters. Sanitization
+// is applied later, only at the wire-building step (protocol.BuildField), not
+// here. This is intentional: do not "fix" this by sanitizing in
+// prepareItemResponseData, or TestBuildItemInformationResponse_
+// CallNumberControlChars_EndToEnd above will no longer be exercising the real
+// BuildField sanitization path.
+func TestPrepareItemResponseData_CallNumberIsRawUnsanitized(t *testing.T) {
+	h := newItemHandler(nil)
+
+	const dirty = "741.5 KHAN\n741.5 KHAN"
+	item := &models.Item{
+		ID:      "item-uuid",
+		Barcode: "12345",
+		Status:  models.ItemStatus{Name: "Available"},
+		EffectiveCallNumberComponents: models.CallNumberComponents{
+			CallNumber: dirty,
+		},
+	}
+
+	data := h.prepareItemResponseData(item, "INST01", "12345", nil, nil, "", nil, "", "", true)
+
+	if data.callNumber != dirty {
+		t.Errorf("prepareItemResponseData callNumber = %q, want raw unsanitized %q", data.callNumber, dirty)
+	}
+}

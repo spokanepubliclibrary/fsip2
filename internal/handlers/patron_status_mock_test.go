@@ -236,3 +236,75 @@ func TestPatronStatusHandle_AutomatedBlock(t *testing.T) {
 	mockPatron.AssertExpectations(t)
 	mockFees.AssertExpectations(t)
 }
+
+// ─── Delimiter / control-character injection regression (Patron Status 24) ───────
+
+// TestPatronStatusHandle_DelimiterAndControlChars_EndToEnd is the end-to-end
+// regression test for the Patron Status (24) response: a FOLIO patron name
+// carrying a raw control character must not break SIP2's line-oriented message
+// framing, and one carrying a literal field delimiter must not inject a spurious
+// field. It drives the real handler path (Handle ->
+// buildPatronStatusResponse -> protocol.BuildPrefixedField ->
+// ResponseBuilder.Build) rather than testing the sanitizer in isolation.
+func TestPatronStatusHandle_DelimiterAndControlChars_EndToEnd(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+
+	// dirty holds the values as FOLIO might actually store them: an embedded
+	// newline in the surname and an embedded '|' in the given name.
+	dirty := makeTestUser()
+	dirty.Personal.LastName = "O'Brien\nJr"
+	dirty.Personal.FirstName = "Mary|Anne"
+
+	// clean holds the same values already sanitized; the two responses must have
+	// the same number of field delimiters, which is the structural proof that the
+	// embedded '|' did not create an extra field.
+	clean := makeTestUser()
+	clean.Personal.LastName = "O'Brien Jr"
+	clean.Personal.FirstName = "Mary Anne"
+
+	run := func(u *models.User) string {
+		t.Helper()
+		sess := testutil.NewAuthSession(tc)
+
+		mockPatron := &MockPatronClient{}
+		mockFees := &MockFeesClient{}
+		mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, u.Barcode).Return(u, nil)
+		mockPatron.On("GetManualBlocks", mock.Anything, mock.Anything, u.ID).
+			Return(&models.ManualBlockCollection{}, nil)
+		mockPatron.On("GetAutomatedPatronBlocks", mock.Anything, mock.Anything, u.ID).
+			Return(&models.AutomatedPatronBlock{}, nil)
+		mockFees.On("GetOpenAccountsExcludingSuspended", mock.Anything, mock.Anything, u.ID).
+			Return(&models.AccountCollection{}, nil)
+
+		h := NewPatronStatusHandler(zap.NewNop(), tc)
+		injectMocks(h.BaseHandler, mockPatron, nil, nil, mockFees)
+
+		msg := buildTestMsg(parser.PatronStatusRequest, map[parser.FieldCode]string{
+			parser.InstitutionID:    "TEST-INST",
+			parser.PatronIdentifier: u.Barcode,
+		})
+
+		resp, err := h.Handle(context.Background(), msg, sess)
+		require.NoError(t, err)
+		return resp
+	}
+
+	dirtyResp := run(dirty)
+	cleanResp := run(clean)
+
+	// 1. Framing: no control characters other than the trailing terminator.
+	assertPatronFramingClean(t, dirtyResp)
+
+	// 2. The embedded newline is space-joined, and 3. the embedded '|' does not
+	//    split AE into two fields (the value survives intact).
+	ae, ok := extractSIP2FieldValue(dirtyResp, tc.FieldDelimiter, "AE")
+	require.True(t, ok, "AE (personal name) must be present")
+	assert.Equal(t, "O'Brien Jr, Mary Anne", ae,
+		"embedded newline must become a space and embedded '|' must not split the field")
+
+	// 3. Structural proof: identical delimiter count to the pre-sanitized equivalent.
+	assert.Equal(t,
+		patronResponseDelimiterCount(cleanResp, tc.FieldDelimiter),
+		patronResponseDelimiterCount(dirtyResp, tc.FieldDelimiter),
+		"an embedded field delimiter must not add a field boundary to the response")
+}

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spokanepubliclibrary/fsip2/internal/helpers"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
 	"github.com/spokanepubliclibrary/fsip2/tests/testutil"
@@ -304,9 +305,9 @@ func TestCheckoutHandler_TitleID_Truncation(t *testing.T) {
 	}
 
 	// Test with very long title (>60 characters - should be pre-truncated by caller)
-	// In real usage, truncateString() is called before buildCheckoutResponse
+	// In real usage, helpers.TruncateString() is called before buildCheckoutResponse
 	veryLongTitle := "This is a very long title that exceeds sixty characters and would need truncation to fit"
-	truncatedTitle := truncateString(veryLongTitle, 60)
+	truncatedTitle := helpers.TruncateString(veryLongTitle, 60)
 
 	response2 := handler.buildCheckoutResponse(
 		true,

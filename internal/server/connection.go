@@ -14,6 +14,7 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
+	"github.com/spokanepubliclibrary/fsip2/internal/sip2/protocol"
 	"github.com/spokanepubliclibrary/fsip2/internal/tenant"
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
 	"go.uber.org/zap"
@@ -452,21 +453,21 @@ func (c *Connection) buildErrorResponse(rawMessage string, processingError error
 
 	// Add institution ID if available
 	if institutionID != "" {
-		content += "|AO" + institutionID
+		content += protocol.BuildPrefixedField("AO", institutionID, "|")
 	}
 
 	// Add patron identifier if available
 	if patronID != "" {
-		content += "|AA" + patronID
+		content += protocol.BuildPrefixedField("AA", patronID, "|")
 	}
 
 	// Add item identifier if available
 	if itemID != "" {
-		content += "|AB" + itemID
+		content += protocol.BuildPrefixedField("AB", itemID, "|")
 	}
 
 	// Add error message to screen message field (AF)
-	content += "|AF" + errorMsg
+	content += protocol.BuildPrefixedField("AF", errorMsg, "|")
 
 	// Use builder to add sequence number, checksum, and delimiter
 	response, err := c.builder.Build(responseCode, content, msg.SequenceNumber)

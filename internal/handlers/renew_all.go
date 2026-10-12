@@ -9,6 +9,7 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
+	"github.com/spokanepubliclibrary/fsip2/internal/sip2/protocol"
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
 	"go.uber.org/zap"
 )
@@ -263,7 +264,14 @@ func (h *RenewAllHandler) buildErrorResponseWithMessage(msg *parser.Message, ses
 	)
 	if err != nil {
 		h.logger.Error("Failed to build error response", zap.Error(err))
-		return "66N00000000" + time.Now().Format("20060102    150405") + "|AO" + institutionID + "|AA" + patronIdentifier + "|AF" + errorMessage
+		// The fixed-length header and its positional timestamp are emitted
+		// verbatim; the data-carrying fields go through the protocol builder so
+		// client-supplied identifiers and wrapped error text cannot carry a
+		// control character or a field delimiter onto the wire.
+		return "66N00000000" + time.Now().Format("20060102    150405") +
+			protocol.BuildPrefixedField("AO", institutionID, "|") +
+			protocol.BuildPrefixedField("AA", patronIdentifier, "|") +
+			protocol.BuildPrefixedField("AF", errorMessage, "|")
 	}
 
 	return response

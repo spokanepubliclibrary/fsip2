@@ -101,11 +101,11 @@ func (h *ItemStatusUpdateHandler) buildItemStatusUpdateResponse(ok bool, institu
 	)
 
 	// Add variable fields
-	response += fmt.Sprintf("|AB%s", itemIdentifier)
-	response += fmt.Sprintf("|AO%s", institutionID)
+	response += protocol.BuildPrefixedField("AB", itemIdentifier, "|")
+	response += protocol.BuildPrefixedField("AO", institutionID, "|")
 
 	// Add title if available
-	response += fmt.Sprintf("|AJ%s", itemIdentifier) // TODO: Get actual title
+	response += protocol.BuildPrefixedField("AJ", itemIdentifier, "|") // TODO: Get actual title
 
 	// Add screen message
 	if ok {

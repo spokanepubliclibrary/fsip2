@@ -7,6 +7,7 @@ import (
 
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio"
+	"github.com/spokanepubliclibrary/fsip2/internal/helpers"
 	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
@@ -260,7 +261,7 @@ func (h *CheckoutHandler) Handle(ctx context.Context, msg *parser.Message, sessi
 		)
 
 		// Truncate title to 60 characters per SIP2 spec
-		title = truncateString(instance.Title, 60)
+		title = helpers.TruncateString(instance.Title, 60)
 		wasTruncated := len(instance.Title) > 60
 		h.logger.Debug("Title prepared for response",
 			zap.String("instance_id", holdings.InstanceID),

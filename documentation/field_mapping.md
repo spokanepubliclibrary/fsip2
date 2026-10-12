@@ -17,6 +17,7 @@ This document provides a comprehensive reference for all supported SIP2 messages
 - [Message 93/94 - Login](#message-9394---login)
 - [Message 97/96 - Request Resend](#message-9796---request-resend)
 - [Message 99/98 - SC/ACS Status](#message-9998---scacs-status)
+- [Data Sanitization](#data-sanitization)
 - [Log Field Reference](#log-field-reference)
 
 ---
@@ -1065,6 +1066,142 @@ scTenants:
 ```
 
 Supports multiple sub-tenants with different configurations based on subnet, port, location, or username.
+
+---
+
+## Data Sanitization
+
+FOLIO string fields can contain embedded control characters — most often newlines introduced by data
+loads, MARC migrations, or staff editing. SIP2 is a line-oriented, delimiter-framed text protocol, so
+two separate classes of character corrupt an outgoing message:
+
+- A **control character** inside a value terminates the message early, so the self-check unit receives
+  a truncated response followed by an unparseable fragment. In practice this does not degrade
+  gracefully; it desynchronizes or crashes the SIP2 client.
+- The **configured field delimiter** inside a value injects a spurious field separator. Every
+  following field shifts by one position, so the SC reads the wrong value for each of them — silently,
+  with no parse error to signal that anything went wrong.
+
+To prevent both, every outgoing field value is sanitized at the SIP2 serialization boundary, inside
+the four builders in [delimiter.go](../internal/sip2/protocol/delimiter.go). All SIP2 fields of all
+message types pass through these builders, so the protection applies uniformly to every response.
+
+### The Four Builders
+
+The builders differ along two axes — where the delimiter sits relative to the value, and whether an
+empty value is still emitted. They are deliberately not merged: collapsing any two of them would
+either move the delimiter to the wrong side of the value or silently change which fields appear.
+
+| Builder | Shape | Empty or all-control value | Applies to | Implementation |
+|---------|-------|----------------------------|------------|----------------|
+| `BuildField` | `<code><value><delim>` | **Omitted** — the field is not emitted at all | Optional variable-length fields, and any field whose absence is itself meaningful | [delimiter.go:103-128](../internal/sip2/protocol/delimiter.go#L103-L128) |
+| `BuildRequiredField` | `<code><value><delim>` | **Always emitted**, present but blank (e.g. `CS\|`) | Fields the SIP2 spec requires even when blank — notably the Checkin Response (10) fields AQ, AP, CK, CH, CS, CV and CT, which clients key off by presence | [delimiter.go:130-158](../internal/sip2/protocol/delimiter.go#L130-L158) |
+| `BuildPrefixedField` | `<delim><code><value>` — **delimiter first** | **Always emitted** | The hand-built responses in `internal/handlers` and `internal/server`, which emit the delimiter before the field code. Field presence there is governed by the surrounding `if` statements, not by the builder | [delimiter.go:160-182](../internal/sip2/protocol/delimiter.go#L160-L182) |
+| `BuildFixedField` | `<value>` padded or truncated to width, no delimiter | Padded to the full width | Fixed-length fields, using a width-preserving sanitize. **Currently has no production callers** — fixed-length sections are assembled directly by the response builder | [delimiter.go:184-198](../internal/sip2/protocol/delimiter.go#L184-L198) |
+
+The value is sanitized **before** the empty check in `BuildField`, so a value consisting only of
+control characters omits the field rather than emitting an empty one.
+
+### Scope of Characters
+
+| Character Range | Treatment |
+|-----------------|-----------|
+| 0x00–0x1F (C0 controls, including CR, LF, TAB, NUL) | Sanitized |
+| 0x7F (DEL) | Sanitized |
+| 0x20 (plain space) | Not affected |
+| The configured field delimiter (default `\|`) | Replaced with a single space — see [Delimiter Neutralization](#delimiter-neutralization) |
+
+### Control Characters
+
+For variable-length fields (CS Call Number, AJ Title, AG Checkin Notes, CH Material Type,
+DA Requestor Name, AF Screen Message, and all others), each **run** of control characters — together
+with any spaces immediately adjacent to it — collapses according to where the run sits:
+
+| Position of the control run | Contribution to the output |
+|-----------------------------|----------------------------|
+| Interior (real text on both sides) | A single space |
+| At the very start of the value | **Nothing** — no leading space is introduced |
+| At the very end of the value | **Nothing** — no trailing space is introduced |
+
+Whitespace that was already at the start or end of the value and is **not** adjacent to a control run
+is preserved as-is; nothing is trimmed on its own account. Non-ASCII text passes through unchanged.
+
+Real examples from items whose `itemLevelCallNumber` carried stray newlines:
+
+| FOLIO Value | Sent in CS Field |
+|-------------|------------------|
+| `"741.5 KHAN\n741.5 KHAN"` | `741.5 KHAN 741.5 KHAN` |
+| `"\n741.5 KHAN"` | `741.5 KHAN` |
+| `"741.5 KHAN\n"` | `741.5 KHAN` |
+| `"741.5\n\r\nKHAN"` | `741.5 KHAN` |
+
+Collapsing a run to one space keeps values readable on a kiosk display and in AMH sorting rules,
+rather than leaving stray padding where the control characters were. Suppressing the space at the
+edges avoids introducing leading or trailing padding that was never in the source data.
+
+**Invariant**: a value with no control characters and no embedded delimiter is returned
+**byte-identical**. Sanitization is only ever visible on data that would otherwise have corrupted the
+message.
+
+### Delimiter Neutralization
+
+Each occurrence of the configured field delimiter inside a value is replaced with **a single space**.
+
+This is a separate concern from control characters: the default delimiter `|` is an ordinary printable
+character, so it falls entirely outside the control-character scope above, yet it is just as
+destructive. SIP2 defines no escape mechanism for a delimiter inside a field value, which leaves
+three options:
+
+| Approach | `741.5\|KHAN` becomes | Verdict |
+|----------|-----------------------|---------|
+| Escape the delimiter | — | Impossible — SIP2 has no escape sequence for a delimiter inside a value |
+| Strip the delimiter | `741.5KHAN` | **Rejected** — merges two visually distinct tokens into one, changing the data a human reads |
+| Replace with a space | `741.5 KHAN` | **Chosen** — preserves the token boundary and matches the control-character policy |
+
+Delimiter replacement runs **before** control-character collapsing, and the order matters: for
+`"A\|\nB"` the delimiter pass yields `"A \nB"`, and the control-run pass then absorbs the space
+adjacent to the run, giving `A B`. The reverse order would leave a stray double space.
+
+The delimiter is read from tenant configuration, so an empty configured delimiter is reachable; it is
+explicitly guarded against, because replacing the empty string would insert a space between every
+single character of every field.
+
+**Implementation**: [utils.go:118-152](../internal/helpers/utils.go#L118-L152)
+(`SanitizeFieldValue`, used by the three variable-length builders),
+[utils.go:63-116](../internal/helpers/utils.go#L63-L116) (`SanitizeString`, the control-character
+pass) and [utils.go:57-61](../internal/helpers/utils.go#L57-L61) (`isControlRune`, the scope above).
+
+### Fixed-Length Fields
+
+For fixed-length fields (the 14-character Patron Status block, the 3-char Language code, the 18-char
+date fields, and the other entries in [Fixed-Length Fields](#fixed-length-fields)), each control
+character is replaced by exactly one space — a strict 1:1 substitution with **no collapsing, no
+trimming, and no delimiter replacement**. Width is preserved exactly, because in these fields a space
+is a meaningful value at a specific offset (for example, a space in Patron Status position 7 means
+"not too many overdue"); collapsing or trimming would shift every following position and silently
+change the meaning of the field.
+
+**Implementation**: [utils.go:154-175](../internal/helpers/utils.go#L154-L175)
+(`SanitizeFixedWidthString`)
+
+### Notes
+
+- Sanitization is applied **globally to every field** and is **not** per-field or per-tenant
+  configurable. It is intentionally independent of the `IsFieldEnabled` / `FieldConfiguration` YAML
+  settings, which control *whether* a field is emitted, not its content. There is no configuration
+  switch to disable it, because there is no valid reason to emit a value that breaks message framing.
+- Sanitization occurs at the protocol layer only. FOLIO model accessors such as
+  `Item.GetEffectiveCallNumber()` deliberately continue to return the raw, unsanitized source value,
+  because sanitization is a wire-protocol concern and internal consumers — logging above all — need to
+  see the true state of the FOLIO record. If a call number looks different in the SIP2 response than
+  in the logs, embedded control characters in the source record are the likely cause.
+- Writing a field by hand instead of through a builder bypasses all of the above. That is how the
+  original defect persisted, so it is now enforced by a test
+  (`TestNoRawSIP2FieldWrites` in `internal/sip2/protocol`) that scans the repository for raw
+  `"|XX"` field writes in both their `fmt.Sprintf` and string-concatenation forms and fails on any
+  unapproved one.
+- Sanitization does not truncate. Length limits are applied separately — see
+  [String Truncation](#string-truncation).
 
 ---
 

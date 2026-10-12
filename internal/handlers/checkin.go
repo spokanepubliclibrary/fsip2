@@ -9,6 +9,7 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"github.com/spokanepubliclibrary/fsip2/internal/helpers"
 	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/mediatype"
@@ -290,7 +291,7 @@ func (h *CheckinHandler) fetchCheckinResponseData(ctx context.Context, token str
 					)
 				} else {
 					// Truncate title to 60 characters per SIP2 spec
-					data.title = truncateString(instance.Title, 60)
+					data.title = helpers.TruncateString(instance.Title, 60)
 				}
 			}
 		}
@@ -427,19 +428,6 @@ func (h *CheckinHandler) fetchCheckinResponseData(ctx context.Context, token str
 	}
 
 	return data
-}
-
-// truncateString truncates a string to maxLen characters
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	// Truncate and handle multi-byte UTF-8 characters properly
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	return string(runes[:maxLen])
 }
 
 // calculateAlertType determines the alert type (CV field) for a checkin response.
