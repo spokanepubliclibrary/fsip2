@@ -436,3 +436,70 @@ func TestSetTimeout_ShorterThanGlobalTimeout(t *testing.T) {
 		t.Errorf("request took %v — expected to time out at ~50 ms, not at the 30 s global timeout", elapsed)
 	}
 }
+
+// Tests for PostWithCookies
+
+func TestPostWithCookies_SendsAndReturnsCookies(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie("folioRefreshToken")
+		require.NoError(t, err)
+		assert.Equal(t, "rt-1", c.Value)
+		assert.Equal(t, "test-tenant", r.Header.Get("X-Okapi-Tenant"))
+
+		http.SetCookie(w, &http.Cookie{Name: "folioAccessToken", Value: "at-2", Path: "/"})
+		http.SetCookie(w, &http.Cookie{Name: "folioRefreshToken", Value: "rt-2", Path: "/authn"})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"name":"ok"}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test-tenant")
+	var result struct {
+		Name string `json:"name"`
+	}
+	cookies, err := client.PostWithCookies(context.Background(), "/authn/refresh", "", nil, &result,
+		&http.Cookie{Name: "folioRefreshToken", Value: "rt-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result.Name)
+
+	got := map[string]string{}
+	for _, c := range cookies {
+		got[c.Name] = c.Value
+	}
+	assert.Equal(t, map[string]string{"folioAccessToken": "at-2", "folioRefreshToken": "rt-2"}, got)
+}
+
+func TestPostWithCookies_EmptyTokenSendsNoOkapiToken(t *testing.T) {
+	var headerPresent bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, headerPresent = r.Header["X-Okapi-Token"]
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test-tenant")
+	_, err := client.PostWithCookies(context.Background(), "/authn/logout", "", nil, nil)
+	require.NoError(t, err)
+	assert.False(t, headerPresent, "an empty token must not send an X-Okapi-Token header")
+}
+
+func TestPostWithCookies_NonSuccessReturnsHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "folioAccessToken", Value: "should-not-be-returned"})
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test-tenant")
+	cookies, err := client.PostWithCookies(context.Background(), "/authn/refresh", "", nil, nil)
+	var httpErr *HTTPError
+	require.True(t, errors.As(err, &httpErr))
+	assert.True(t, httpErr.IsUnauthorized())
+	assert.Nil(t, cookies, "no cookies are returned on error")
+}
+
+func TestSharedHTTPClient_HasNoCookieJar(t *testing.T) {
+	// A jar on the shared client would replay one SIP connection's tokens on another's requests.
+	client := NewClient("http://example.invalid", "test-tenant")
+	assert.Nil(t, client.httpClient.Jar)
+}

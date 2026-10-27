@@ -1355,7 +1355,7 @@ func TestConfig_Validate(t *testing.T) {
 			errContains: "invalid OkapiURL",
 		},
 		{
-			name: "invalid - token cache capacity zero",
+			name: "valid - deprecated token cache capacity absent",
 			config: &Config{
 				Port:               6443,
 				HealthCheckPort:    8081,
@@ -1364,11 +1364,10 @@ func TestConfig_Validate(t *testing.T) {
 				ScanPeriod:         300000,
 				LogLevel:           "info",
 			},
-			wantErr:     true,
-			errContains: "token cache capacity must be positive",
+			wantErr: false,
 		},
 		{
-			name: "invalid - token cache capacity negative",
+			name: "valid - deprecated token cache capacity is ignored, even if negative",
 			config: &Config{
 				Port:               6443,
 				HealthCheckPort:    8081,
@@ -1377,8 +1376,7 @@ func TestConfig_Validate(t *testing.T) {
 				ScanPeriod:         300000,
 				LogLevel:           "info",
 			},
-			wantErr:     true,
-			errContains: "token cache capacity must be positive",
+			wantErr: false,
 		},
 		{
 			name: "invalid - scan period negative",

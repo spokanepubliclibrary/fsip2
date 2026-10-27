@@ -83,8 +83,11 @@ See See [documentation/field_mapping.md](documentation/field_mapping.md) for com
 
 ### Security
 - TLS/SSL support
-- Token-based authentication with caching and automatic expiration validation
-- Automatic token refresh for expired credentials
+- Kiosk (SIP 93) login via `POST /authn/login-with-expiry`. Tokens arrive as `folioAccessToken` / `folioRefreshToken` cookies; the access token is then sent as `X-Okapi-Token`
+- Token lifetimes come from the server (`accessTokenExpiration`), not an assumed default. Tokens are held per SIP connection, never shared between connections
+- Automatic renewal 90 s before expiry via `POST /authn/refresh` (same Keycloak session), falling back to a fresh login with the stored kiosk credentials
+- **Keep the host/pod clock NTP-synced.** Expirations are absolute server times; the 90 s buffer covers normal drift only
+- Token values are never logged
 - PIN/password obfuscation in logs
 
 
@@ -133,7 +136,9 @@ All permission required for fsip2:
 ### Prerequisites
 
 - Go 1.23 or higher
-- Access to a FOLIO Okapi instance
+- Access to a FOLIO instance:
+  - **Eureka** (Trillium / R1-2026 or later), using the Kong gateway URL as `okapiUrl`, or
+  - **Okapi Poppy or later** (mod-login v7.10.0+). **Breaking change:** fsip2 no longer calls the deprecated `/authn/login`, so tenants on Orchid or older must stay on the previous fsip2 release
 - (Optional) Docker for containerized deployment
 
 ### Installation
@@ -508,7 +513,6 @@ FSIP2 has a comprehensive test suite with multiple testing layers to ensure reli
 **Current Coverage: 86.9%**
 
 **Package-Level Coverage:**
-- `internal/cache`: 100.0% - Full coverage of token caching
 - `internal/helpers`: 100.0% - Helper utilities
 - `internal/localization`: 100.0% - Localization support
 - `internal/metrics`: 100.0% - Complete metrics instrumentation
@@ -581,7 +585,7 @@ This separation ensures fast feedback during development while maintaining compr
 
 ### Key Features Tested
 
-- **Token Expiration & Refresh**: Automatic detection and refresh of expired FOLIO authentication tokens
+- **Token Expiration & Refresh**: Server-provided expirations, renewal via `/authn/refresh` with re-login fallback, refresh-token rotation, and no use of the deprecated `/authn/login`
 - **Multi-Tenant Resolution**: IP-based, port-based, service point, and username-prefix tenant/configuration routing
 - **SIP2 Protocol**: All 13 message types with field validation
 - **FOLIO Integration**: API client with retry logic and error handling
@@ -683,8 +687,7 @@ Available metrics:
 
 - `okapiUrl`: FOLIO Okapi base URL
 - `healthCheckPort`: Health check HTTP port (default: 8081)
-- `tokenCacheCapacity`: Maximum cached tokens (default: 100)
-- `tokenCacheTTL`: Token cache time-to-live with automatic expiration validation
+- `tokenCacheCapacity`: **Deprecated, ignored.** Tokens are held per SIP connection. A config that still sets it loads normally and logs one startup warning
 - `scanPeriod`: Config reload interval in ms (default: 300000)
 - `port`: SIP2 server port (default: 6443)
   - Additional ports added if specified in scTenants (see section below)
@@ -832,7 +835,8 @@ scTenants:
 ### Authentication Failures
 - Verify Okapi URL is correct
 - Check tenant credentials
-- Review token cache settings
+- On Okapi, confirm the platform is Poppy or later (`/authn/login-with-expiry` must exist)
+- Look for `Token renewal` WARN lines (`method=refresh|relogin`, with the HTTP status)
 
 ### Message Parsing Errors
 - Verify character encoding matches SIP2 client

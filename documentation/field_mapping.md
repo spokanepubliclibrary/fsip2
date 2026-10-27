@@ -901,10 +901,13 @@ renewAllMaxItems: 50  # Maximum items to attempt renewal (default: 50)
 ### Authentication Flow
 
 1. Validate username and password format
-2. Call FOLIO authentication: `POST /authn/login`
+2. Call FOLIO authentication: `POST /authn/login-with-expiry`
    - Body: `{"username": "...", "password": "..."}`
-3. Store authentication token in session
+   - Response: `folioAccessToken` and `folioRefreshToken` cookies; body `{"accessTokenExpiration", "refreshTokenExpiration"}`
+3. Store both tokens and their expirations in the session (per SIP connection)
 4. Return success (1) or failure (0)
+
+Before a FOLIO call, an access token within 90 s of expiry is renewed with `POST /authn/refresh` (refresh-token cookie only, no `X-Okapi-Token`); if that fails or the refresh token has expired, fsip2 logs in again with the stored credentials.
 
 **Important**: The 93 message establishes system-level authentication. Subsequent patron operations use this token for FOLIO API calls.
 
@@ -1287,7 +1290,8 @@ change the meaning of the field.
 
 | Endpoint | Method | Purpose | Used By Messages |
 |----------|--------|---------|------------------|
-| `/authn/login` | POST | System authentication | 93 |
+| `/authn/login-with-expiry` | POST | System authentication | 93 |
+| `/authn/refresh` | POST | Access-token renewal | Any FOLIO-bound message |
 | `/bl/users/by-barcode/{barcode}` | GET | Get user by barcode | 23, 63, 64 |
 | `/users/{id}` | GET | Get user by ID | 63, 64 |
 | `/circulation/check-in-by-barcode` | POST | Checkin item | 09 |

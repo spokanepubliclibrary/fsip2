@@ -10,8 +10,6 @@ okapiUrl: https://okapi.example.com
 # HTTP health check port
 healthCheckPort: 8081
 
-# Maximum number of cached authentication tokens
-tokenCacheCapacity: 100
 
 # How often (in milliseconds) to poll for tenant config changes. Default: 300000 (5 minutes).
 # Set to 0 to use the default. Minimum effective value: 1000ms.

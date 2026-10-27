@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -117,22 +118,11 @@ func (h *BaseHandler) getAuthenticatedFolioClient(ctx context.Context, session *
 			zap.Duration("time_since_expiry", time.Since(tokenExpiresAt)),
 		)
 
-		// Try to refresh using stored credentials
-		newToken, refreshErr := h.refreshToken(ctx, session)
-		if refreshErr == nil {
-			h.logger.Debug("Token refresh successful",
-				logging.TypeField(logging.TypeApplication),
-				zap.String("session_id", session.ID),
-				zap.Time("new_token_expires_at", session.GetTokenExpiresAt()),
-			)
+		// Renew via /authn/refresh, falling back to re-login with stored credentials
+		newToken, renewErr := h.renewToken(ctx, session)
+		if renewErr == nil {
 			return client, newToken, nil
 		}
-
-		h.logger.Warn("Token refresh failed",
-			logging.TypeField(logging.TypeApplication),
-			zap.String("session_id", session.ID),
-			zap.Error(refreshErr),
-		)
 	}
 
 	h.logger.Warn("No valid authentication token available in session",
@@ -143,12 +133,106 @@ func (h *BaseHandler) getAuthenticatedFolioClient(ctx context.Context, session *
 	return client, "", fmt.Errorf("no authentication token available")
 }
 
-// refreshToken attempts to refresh an expired token using stored credentials
+// renewToken renews an expired access token for the session and returns the new one.
+//
+// Renewals are serialised per session; a caller that waited for the lock re-checks the
+// token first, since another caller may already have renewed it. A refresh via
+// /authn/refresh is preferred (same Keycloak session); a full re-login with the stored
+// credentials is the fallback when there is no usable refresh token or the refresh fails.
+//
+// The superseded refresh token is not logged out here. When the fallback runs, that token
+// has usually expired or been rejected, so its Keycloak session is already gone; the
+// transient-failure case is tracked in 01b.
+func (h *BaseHandler) renewToken(ctx context.Context, session *types.Session) (string, error) {
+	session.LockRenewal()
+	defer session.UnlockRenewal()
+
+	if !session.IsTokenExpired() {
+		return session.GetAuthToken(), nil
+	}
+
+	if session.HasValidRefreshToken(types.TokenExpiryBuffer) {
+		token, err := h.tryTokenRefresh(ctx, session)
+		h.logRenewal(session, "refresh", err)
+		if err == nil {
+			return token, nil
+		}
+	}
+
+	token, err := h.tryRelogin(ctx, session)
+	h.logRenewal(session, "relogin", err)
+	return token, err
+}
+
+// tryTokenRefresh exchanges the session's refresh token for a new token pair.
+// Refresh tokens rotate, so both tokens are replaced together.
+func (h *BaseHandler) tryTokenRefresh(ctx context.Context, session *types.Session) (string, error) {
+	refreshToken, _ := session.GetRefreshToken()
+
+	authClient := folio.NewAuthClient(session.TenantConfig.OkapiURL, session.TenantConfig.OkapiTenant)
+	authResp, err := authClient.Refresh(ctx, refreshToken)
+	if err != nil {
+		return "", err
+	}
+
+	session.UpdateTokens(authResp.OkapiToken, authResp.ExpiresAt, authResp.RefreshToken, authResp.RefreshTokenExpiration)
+	return authResp.OkapiToken, nil
+}
+
+// logRenewal logs one line per renewal attempt. Failures log only the error class
+// (HTTP status where available), never response bodies or token values.
+func (h *BaseHandler) logRenewal(session *types.Session, method string, err error) {
+	if err == nil {
+		h.logger.Info("Token renewal",
+			logging.TypeField(logging.TypeApplication),
+			zap.String("method", method),
+			zap.String("result", "ok"),
+			zap.Time("access_expires_at", session.GetTokenExpiresAt()),
+			zap.String("session_id", session.ID),
+		)
+		return
+	}
+
+	fields := []zap.Field{
+		logging.TypeField(logging.TypeApplication),
+		zap.String("method", method),
+		zap.String("result", "failed"),
+		zap.String("session_id", session.ID),
+	}
+	var httpErr *folio.HTTPError
+	if errors.As(err, &httpErr) {
+		fields = append(fields, zap.Int("status_code", httpErr.StatusCode))
+	} else {
+		fields = append(fields, zap.String("error_class", renewalErrorClass(err)))
+	}
+	h.logger.Warn("Token renewal", fields...)
+}
+
+// renewalErrorClass maps a non-HTTP renewal error to a short, body-free label.
+func renewalErrorClass(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, folio.ErrNoRefreshToken):
+		return "no_refresh_token"
+	case errors.Is(err, errNoCredentials):
+		return "no_credentials"
+	default:
+		return err.Error()
+	}
+}
+
+// errNoCredentials is returned by tryRelogin when no kiosk credentials are stored.
+var errNoCredentials = errors.New("no credentials stored for token refresh")
+
+// tryRelogin performs a full login with the stored kiosk credentials.
 // Implements retry with exponential backoff for resilience
-func (h *BaseHandler) refreshToken(ctx context.Context, session *types.Session) (string, error) {
+func (h *BaseHandler) tryRelogin(ctx context.Context, session *types.Session) (string, error) {
 	// Check if credentials are stored
 	if !session.HasAuthCredentials() {
-		return "", fmt.Errorf("no credentials stored for token refresh")
+		return "", errNoCredentials
 	}
 
 	username, password := session.GetAuthCredentials()
@@ -162,7 +246,7 @@ func (h *BaseHandler) refreshToken(ctx context.Context, session *types.Session) 
 		if attempt > 0 {
 			// Exponential backoff: 100ms, 200ms, 400ms
 			backoff := baseBackoff * time.Duration(1<<uint(attempt-1))
-			h.logger.Debug("Token refresh retry",
+			h.logger.Debug("Token re-login retry",
 				logging.TypeField(logging.TypeApplication),
 				zap.String("session_id", session.ID),
 				zap.Int("attempt", attempt+1),
@@ -176,17 +260,12 @@ func (h *BaseHandler) refreshToken(ctx context.Context, session *types.Session) 
 			}
 		}
 
-		// Create auth client and attempt login
-		authClient := folio.NewAuthClient(
-			session.TenantConfig.OkapiURL,
-			session.TenantConfig.OkapiTenant,
-			100, // Token cache capacity
-		)
+		authClient := folio.NewAuthClient(session.TenantConfig.OkapiURL, session.TenantConfig.OkapiTenant)
 
 		authResp, err := authClient.Login(ctx, username, password)
 		if err != nil {
-			lastErr = fmt.Errorf("refresh attempt %d failed: %w", attempt+1, err)
-			h.logger.Debug("Token refresh attempt failed",
+			lastErr = fmt.Errorf("re-login attempt %d failed: %w", attempt+1, err)
+			h.logger.Debug("Token re-login attempt failed",
 				logging.TypeField(logging.TypeApplication),
 				zap.String("session_id", session.ID),
 				zap.Int("attempt", attempt+1),
@@ -195,31 +274,19 @@ func (h *BaseHandler) refreshToken(ctx context.Context, session *types.Session) 
 			continue
 		}
 
-		// Determine token to use (prefer OkapiToken, fallback to AccessToken)
-		token := authResp.OkapiToken
-		if token == "" {
-			token = authResp.AccessToken
-		}
+		session.UpdateTokens(authResp.OkapiToken, authResp.ExpiresAt, authResp.RefreshToken, authResp.RefreshTokenExpiration)
 
-		if token == "" {
-			lastErr = fmt.Errorf("refresh attempt %d: no token received", attempt+1)
-			continue
-		}
-
-		// Update session with new token
-		session.UpdateToken(token, authResp.ExpiresAt)
-
-		h.logger.Debug("Token refresh succeeded",
+		h.logger.Debug("Token re-login succeeded",
 			logging.TypeField(logging.TypeApplication),
 			zap.String("session_id", session.ID),
 			zap.Int("attempts", attempt+1),
 			zap.Time("new_expires_at", authResp.ExpiresAt),
 		)
 
-		return token, nil
+		return authResp.OkapiToken, nil
 	}
 
-	return "", fmt.Errorf("token refresh failed after %d attempts: %w", maxRetries, lastErr)
+	return "", fmt.Errorf("token re-login failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // logRequest logs an incoming SIP2 request

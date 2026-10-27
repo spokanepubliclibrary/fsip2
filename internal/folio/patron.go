@@ -255,8 +255,9 @@ func (pc *PatronClient) VerifyPatronPasswordWithLogin(ctx context.Context, usern
 		Password: password,
 	}
 
-	var loginResp models.LoginResponse
-	err := pc.client.Post(ctx, "/authn/login-with-expiry", "", loginReq, &loginResp)
+	// Only the status matters here, so the body (token expirations) is not parsed.
+	// Password verification is supported on Okapi only; Eureka requires PIN verification.
+	err := pc.client.Post(ctx, "/authn/login-with-expiry", "", loginReq, nil)
 	if err != nil {
 		// Check if it's an authentication error (401/422)
 		if httpErr, ok := err.(*HTTPError); ok {

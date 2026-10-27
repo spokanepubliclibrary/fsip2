@@ -545,9 +545,9 @@ func TestVerifyPatronPasswordWithLogin_Success(t *testing.T) {
 	server := newTestServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/authn/login-with-expiry" && r.Method == http.MethodPost {
-			resp := models.LoginResponse{AccessToken: "valid-token", ExpiresIn: 3600}
+			http.SetCookie(w, &http.Cookie{Name: "folioAccessToken", Value: "valid-token", Path: "/"})
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(resp)
+			w.Write([]byte(`{"accessTokenExpiration":"2026-10-23T22:35:43Z"}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)

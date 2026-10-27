@@ -15,11 +15,17 @@
 //
 // # Authentication
 //
-// FOLIO API authentication uses Okapi tokens:
-//  1. Client calls Authenticate() with username/password
-//  2. FOLIO returns an x-okapi-token header
-//  3. Token is included in all subsequent requests
-//  4. Tokens are cached per session to avoid re-authentication
+// Kiosk authentication (AuthClient) works the same on Eureka and Okapi Poppy+:
+//  1. Login posts username/password to /authn/login-with-expiry. The access and refresh
+//     tokens arrive as folioAccessToken / folioRefreshToken Set-Cookie headers; the body
+//     carries their absolute expirations.
+//  2. The access token is sent as X-Okapi-Token on every subsequent request.
+//  3. Refresh posts only the folioRefreshToken cookie to /authn/refresh and receives a new
+//     pair. Refresh tokens rotate, so both stored tokens are replaced together.
+//  4. If refresh fails or the refresh token has expired, the caller logs in again.
+//
+// Tokens are owned per SIP connection by types.Session; there is no shared token cache.
+// The /authn/* calls never send X-Okapi-Token (PostWithCookies with an empty token).
 //
 // # HTTP Client Pooling
 //

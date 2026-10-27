@@ -7,6 +7,10 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/config"
 )
 
+// TokenExpiryBuffer is how long before a token's expiry it is treated as expired.
+// It covers request latency and normal host/server clock drift.
+const TokenExpiryBuffer = 90 * time.Second
+
 // Session represents a SIP2 client session
 type Session struct {
 	ID              string
@@ -22,6 +26,14 @@ type Session struct {
 	CreatedAt       time.Time
 	LastActivity    time.Time
 	mu              sync.RWMutex
+
+	// Refresh token for this connection's Keycloak session (from login-with-expiry or refresh).
+	// It is a credential: never logged, never copied by Clone.
+	refreshToken          string
+	refreshTokenExpiresAt time.Time
+
+	// renewMu serialises token renewal so concurrent callers renew at most once.
+	renewMu sync.Mutex
 }
 
 // NewSession creates a new session
@@ -81,6 +93,46 @@ func (s *Session) UpdateToken(authToken string, expiresAt time.Time) {
 	s.AuthToken = authToken
 	s.TokenExpiresAt = expiresAt
 	s.LastActivity = time.Now()
+}
+
+// UpdateTokens replaces the access and refresh tokens and their expirations together.
+// Refresh tokens rotate, so both must always be replaced as a pair.
+func (s *Session) UpdateTokens(accessToken string, accessExpiresAt time.Time, refreshToken string, refreshExpiresAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.AuthToken = accessToken
+	s.TokenExpiresAt = accessExpiresAt
+	s.refreshToken = refreshToken
+	s.refreshTokenExpiresAt = refreshExpiresAt
+	s.LastActivity = time.Now()
+}
+
+// GetRefreshToken returns the refresh token and its expiration
+func (s *Session) GetRefreshToken() (string, time.Time) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.refreshToken, s.refreshTokenExpiresAt
+}
+
+// HasValidRefreshToken reports whether a refresh token is stored and will not expire
+// within buffer. A refresh token with no known expiration is treated as not valid.
+func (s *Session) HasValidRefreshToken(buffer time.Duration) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.refreshToken == "" || s.refreshTokenExpiresAt.IsZero() {
+		return false
+	}
+	return time.Now().Add(buffer).Before(s.refreshTokenExpiresAt)
+}
+
+// LockRenewal acquires the per-session token renewal lock
+func (s *Session) LockRenewal() {
+	s.renewMu.Lock()
+}
+
+// UnlockRenewal releases the per-session token renewal lock
+func (s *Session) UnlockRenewal() {
+	s.renewMu.Unlock()
 }
 
 // UpdateActivity updates the last activity time
@@ -167,8 +219,7 @@ func (s *Session) IsTokenExpired() bool {
 	if s.TokenExpiresAt.IsZero() {
 		return true // No expiration set, consider expired
 	}
-	// Add 90s buffer for safety (same as token cache)
-	return time.Now().Add(90 * time.Second).After(s.TokenExpiresAt)
+	return time.Now().Add(TokenExpiryBuffer).After(s.TokenExpiresAt)
 }
 
 // Clear resets all session state including ACS credentials.
@@ -185,6 +236,8 @@ func (s *Session) Clear() {
 	s.PatronBarcode = ""
 	s.AuthToken = ""
 	s.TokenExpiresAt = time.Time{} // Reset to zero value
+	s.refreshToken = ""
+	s.refreshTokenExpiresAt = time.Time{}
 	s.LastActivity = time.Now()
 }
 
@@ -228,7 +281,7 @@ func (s *Session) GetTenant() *config.TenantConfig {
 }
 
 // Clone creates a copy of the session (for safe passing)
-// Note: Does NOT copy stored credentials (password) for security
+// Note: Does NOT copy stored credentials (password, refresh token) for security
 func (s *Session) Clone() *Session {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -241,7 +294,7 @@ func (s *Session) Clone() *Session {
 		PatronID:        s.PatronID,
 		PatronBarcode:   s.PatronBarcode,
 		Username:     s.Username,
-		// password intentionally not copied for security
+		// password and refresh token intentionally not copied for security
 		LocationCode: s.LocationCode,
 		IsAuthenticated: s.IsAuthenticated,
 		CreatedAt:       s.CreatedAt,
