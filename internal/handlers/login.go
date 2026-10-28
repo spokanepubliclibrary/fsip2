@@ -59,9 +59,11 @@ func (h *LoginHandler) Handle(ctx context.Context, msg *parser.Message, session 
 
 	// Short-circuit: if the session already holds a valid (non-expired) token for the
 	// same credentials, skip the FOLIO round-trip entirely. A new login would open a
-	// second Keycloak session for this connection and orphan the first. Different
-	// credentials (another user, or a wrong password) always go to FOLIO.
-	if session.IsAuth() && !session.IsTokenExpired() && sessionCredentialsMatch(session, username, password) {
+	// second Keycloak session for this connection and end the first. Different
+	// credentials (another user, or a wrong password) always go to FOLIO, as does a token
+	// issued by another tenant (this 93 moved the session to a different tenant).
+	if session.IsAuth() && !session.IsTokenExpired() && !session.HasTokensFromOtherTenant() &&
+		sessionCredentialsMatch(session, username, password) {
 		h.logger.Info("Login skipped — session token still valid",
 			zap.String("username", username),
 			zap.String("session_id", session.ID),
@@ -80,27 +82,54 @@ func (h *LoginHandler) Handle(ctx context.Context, msg *parser.Message, session 
 	}
 
 	authClient := folio.NewAuthClient(session.TenantConfig.OkapiURL, session.TenantConfig.OkapiTenant)
+	previousUsername := session.GetUsername()
+
+	// Hold the renewal lock from the login until the new pair is stored, so a concurrent
+	// renewal can't store a pair that this login then replaces without logging it out.
+	session.LockRenewal()
 
 	// Authenticate with FOLIO (/authn/login-with-expiry). Login guarantees both tokens are present.
 	authResp, err := authClient.Login(ctx, username, password)
 	if err != nil {
+		// A failed login normally leaves the session untouched. But if this 93 moved the
+		// session to another tenant, the stored pair belongs to the previous tenant and can't
+		// serve this one: end that Keycloak session and drop the authentication.
+		var replaced types.TokenPair
+		if session.HasTokensFromOtherTenant() {
+			replaced = session.TakeTokens()
+			session.Clear()
+		}
+		session.UnlockRenewal()
+
 		h.logger.Error("Authentication failed",
 			zap.String("username", username),
 			zap.Error(err),
 		)
+		if !replaced.IsEmpty() {
+			h.logger.Warn("Previous tenant's session discarded after failed login",
+				zap.String("session_id", session.ID),
+				zap.String("tenant", session.TenantConfig.Tenant),
+			)
+			h.logoutReplacedTokens(replaced, session.ID, previousUsername, LogoutReasonTenantChanged)
+		}
 		return h.buildLoginResponse(false, msg.SequenceNumber, session), nil
 	}
+
+	// Store the token pair so renewal can use /authn/refresh before falling back to re-login.
+	// The pair it replaces (if any) belongs to a Keycloak session nothing will use again.
+	replaced := session.SwapTokens(authResp.OkapiToken, authResp.ExpiresAt, authResp.RefreshToken, authResp.RefreshTokenExpiration)
 
 	// Store authentication in session (username, patronID, patronBarcode, token, expiresAt)
 	// For login handler, we don't have patron info yet, so use username for all
 	session.SetAuthenticated(username, "", "", authResp.OkapiToken, authResp.ExpiresAt)
 
-	// Store the token pair so renewal can use /authn/refresh before falling back to re-login
-	session.UpdateTokens(authResp.OkapiToken, authResp.ExpiresAt, authResp.RefreshToken, authResp.RefreshTokenExpiration)
-
 	// Store credentials for automatic token refresh (Option A - Phase 3)
 	// This enables getAuthenticatedFolioClient() to re-authenticate when token expires
 	session.SetAuthCredentials(password)
+	session.UnlockRenewal()
+
+	// End the replaced pair's Keycloak session in the background; the 94 is not delayed.
+	h.logoutReplacedTokens(replaced, session.ID, previousUsername, LogoutReasonRelogin93)
 
 	// Calculate time until expiration for logging
 	timeUntilExpiry := time.Until(authResp.ExpiresAt)

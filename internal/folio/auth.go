@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/spokanepubliclibrary/fsip2/internal/logging"
@@ -21,6 +22,14 @@ const (
 // ErrNoRefreshToken is returned when a refresh token is required but empty.
 // No HTTP call is made in that case.
 var ErrNoRefreshToken = errors.New("no refresh token")
+
+// ErrInvalidRefreshToken is returned by Logout when the refresh token is not JWT-shaped.
+// No HTTP call is made in that case.
+var ErrInvalidRefreshToken = errors.New("refresh token is not JWT-shaped")
+
+// ErrNoAccessToken is returned by Logout when the access token is empty.
+// No HTTP call is made in that case.
+var ErrNoAccessToken = errors.New("no access token")
 
 // Package-level logger for auth operations (can be set via SetAuthLogger)
 var authLogger *zap.Logger
@@ -85,6 +94,55 @@ func (ac *AuthClient) Refresh(ctx context.Context, refreshToken string) (*models
 
 	logTokenExpirations("refresh", "", &refreshResp)
 	return &refreshResp, nil
+}
+
+// Logout ends the Keycloak session that refreshToken belongs to via /authn/logout.
+//
+// TRAP: on Eureka (mod-login-keycloak), a logout that carries an access token (header or
+// cookie) with a missing, blank or whitespace refresh token ends EVERY session of the user,
+// i.e. every SIP device sharing the kiosk username. The guards below therefore run before
+// any request is built, and the access token is only ever sent from here, as a cookie,
+// next to a validated refresh token. The X-Okapi-Token header is never sent.
+//
+// The access token must be current: the gateway rejects an expired one (401) and nothing
+// is ended. Callers refresh first when it has expired.
+func (ac *AuthClient) Logout(ctx context.Context, accessToken, refreshToken string) error {
+	if strings.TrimSpace(refreshToken) == "" {
+		return ErrNoRefreshToken
+	}
+	if !isJWTShaped(refreshToken) {
+		return ErrInvalidRefreshToken
+	}
+	if strings.TrimSpace(accessToken) == "" {
+		return ErrNoAccessToken
+	}
+
+	_, err := ac.client.PostWithCookies(ctx, "/authn/logout", "", nil, nil,
+		&http.Cookie{Name: RefreshTokenCookie, Value: refreshToken},
+		&http.Cookie{Name: AccessTokenCookie, Value: accessToken})
+	if err != nil {
+		return fmt.Errorf("logout failed: %w", err)
+	}
+	return nil
+}
+
+// isJWTShaped reports whether token is in JWT compact form: 3 (signed) or 5 (encrypted)
+// non-empty, dot-separated segments. It catches corrupted values such as "null" or a
+// truncated token that are not blank but that the server might treat as blank.
+func isJWTShaped(token string) bool {
+	if strings.ContainsAny(token, " \t\r\n") {
+		return false
+	}
+	segments := strings.Split(token, ".")
+	if len(segments) != 3 && len(segments) != 5 {
+		return false
+	}
+	for _, segment := range segments {
+		if segment == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // fillTokens copies the tokens from the response cookies into resp and sets ExpiresAt.

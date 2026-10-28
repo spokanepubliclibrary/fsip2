@@ -25,6 +25,7 @@ FSIP2 is a bridge application that connects self-service library kiosks with the
 - **Token Expiration Validation**: Automatic detection and refresh of expired FOLIO authentication tokens with 90-second safety buffer
 - **Session Token Tracking**: Enhanced session management with token expiration timestamps
 - **Improved Error Handling**: Better handling of authentication failures and token refresh scenarios
+- **Keycloak Session Cleanup**: A SIP connection's Keycloak session is ended when the connection closes or a 93 Login replaces it, instead of staying alive until its refresh token expires. **Behaviour change:** if a 93 moves a connection to a different tenant and that login fails, the connection is no longer left authenticated with the previous tenant's tokens; it must log in again
 
 ### Testing & Code Quality
 - **Comprehensive Test Suite**: 86.9% overall coverage with most packages exceeding 85%
@@ -87,6 +88,10 @@ See See [documentation/field_mapping.md](documentation/field_mapping.md) for com
 - Token lifetimes come from the server (`accessTokenExpiration`), not an assumed default. Tokens are held per SIP connection, never shared between connections
 - Automatic renewal 90 s before expiry via `POST /authn/refresh` (same Keycloak session), falling back to a fresh login with the stored kiosk credentials
 - **Keep the host/pod clock NTP-synced.** Expirations are absolute server times; the 90 s buffer covers normal drift only
+- **Keycloak session cleanup:** fsip2 ends its Keycloak session (`POST /authn/logout`) when a SIP connection closes (client disconnect, idle timeout or error) and when a 93 Login on an open connection replaces it. There is one session per SIP connection, so 8 AMH units sharing a kiosk username hold 8 sessions, and ending one never affects the others
+  - Sessions open when fsip2 restarts are **not** ended; they expire on their own after the refresh-token lifetime (configured in each tenant)
+  - Logout is best-effort (3 s limit) and never delays a SIP response. An expired access token is refreshed first, because the gateway rejects a logout with an expired one
+  - **Never use `/authn/logout-all`, or a logout without the refresh token, for a kiosk user:** on Eureka that ends **every** session of the username, i.e. every SIP device at the branch. See [documentation/eureka_capabilities.md](documentation/eureka_capabilities.md#keycloak-sessions)
 - Token values are never logged
 - PIN/password obfuscation in logs
 
@@ -586,6 +591,7 @@ This separation ensures fast feedback during development while maintaining compr
 ### Key Features Tested
 
 - **Token Expiration & Refresh**: Server-provided expirations, renewal via `/authn/refresh` with re-login fallback, refresh-token rotation, and no use of the deprecated `/authn/login`
+- **Keycloak Session Cleanup**: logout on close, 93 re-login and renewal fallback; the mock FOLIO server reproduces the Trillium `/authn/logout` behaviour, including the blank-refresh-token trap, and every logout test asserts it never fires
 - **Multi-Tenant Resolution**: IP-based, port-based, service point, and username-prefix tenant/configuration routing
 - **SIP2 Protocol**: All 13 message types with field validation
 - **FOLIO Integration**: API client with retry logic and error handling

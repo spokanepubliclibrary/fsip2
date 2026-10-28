@@ -29,6 +29,10 @@ type Server struct {
 	handlers      map[parser.MessageCode]MessageHandler
 	metrics       *metrics.Metrics
 
+	// sessionLogout ends a closing connection's Keycloak session. nil means no logout.
+	// Set by NewServer; tests replace it.
+	sessionLogout func(session *types.Session, reason string)
+
 	// Connection tracking
 	activeConnections int64
 	totalConnections  int64
@@ -54,6 +58,9 @@ func NewServer(cfg *config.Config, logger *zap.Logger) (*Server, error) {
 		handlers:      make(map[parser.MessageCode]MessageHandler),
 		metrics:       m,
 		isRunning:     false,
+		sessionLogout: func(session *types.Session, reason string) {
+			handlers.LogoutSession(session, logger, reason)
+		},
 	}, nil
 }
 

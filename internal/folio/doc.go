@@ -23,6 +23,13 @@
 //  3. Refresh posts only the folioRefreshToken cookie to /authn/refresh and receives a new
 //     pair. Refresh tokens rotate, so both stored tokens are replaced together.
 //  4. If refresh fails or the refresh token has expired, the caller logs in again.
+//  5. Logout posts the folioRefreshToken and folioAccessToken cookies to /authn/logout,
+//     which ends only the Keycloak session that refresh token belongs to. It refuses (no
+//     request) an empty, whitespace or non-JWT-shaped refresh token, or an empty access
+//     token: on Eureka an access token with a blank refresh token ends EVERY session of
+//     the user. The access token must be current (the gateway rejects an expired one), so
+//     callers refresh first; handlers.LogoutTokens does that and sends the request to the
+//     tenant that issued the pair.
 //
 // Tokens are owned per SIP connection by types.Session; there is no shared token cache.
 // The /authn/* calls never send X-Okapi-Token (PostWithCookies with an empty token).

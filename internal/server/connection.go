@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strings"
 	"time"
 
+	"github.com/spokanepubliclibrary/fsip2/internal/handlers"
 	"github.com/spokanepubliclibrary/fsip2/internal/helpers"
 	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
@@ -64,8 +66,8 @@ func NewConnection(
 }
 
 // Handle processes the connection
-func (c *Connection) Handle(ctx context.Context) error {
-	defer c.conn.Close()
+func (c *Connection) Handle(ctx context.Context) (err error) {
+	defer func() { c.closeAndLogout(err) }()
 
 	// Set read timeout
 	if err := c.conn.SetReadDeadline(time.Now().Add(5 * time.Minute)); err != nil {
@@ -114,6 +116,33 @@ func (c *Connection) Handle(ctx context.Context) error {
 				return fmt.Errorf("failed to reset read deadline: %w", err)
 			}
 		}
+	}
+}
+
+// closeAndLogout closes the socket first, so the device is never held up, then ends the
+// connection's Keycloak session. No renewal lock is needed: the read loop has exited, so no
+// handler is running on this session. A process exit does not run this (no logout on shutdown).
+func (c *Connection) closeAndLogout(handleErr error) {
+	c.conn.Close()
+	if c.server == nil || c.server.sessionLogout == nil {
+		return
+	}
+	c.server.sessionLogout(c.session, closeReason(handleErr))
+}
+
+// closeReason maps how Handle returned to the logout reason that is logged.
+func closeReason(err error) string {
+	var netErr net.Error
+	switch {
+	case err == nil:
+		return handlers.LogoutReasonClientClosed
+	// Context errors first: context.DeadlineExceeded also reports Timeout() as a net.Error.
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return handlers.LogoutReasonContextCancelled
+	case errors.As(err, &netErr) && netErr.Timeout():
+		return handlers.LogoutReasonReadTimeout
+	default:
+		return handlers.LogoutReasonError
 	}
 }
 
