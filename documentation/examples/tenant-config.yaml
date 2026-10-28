@@ -48,7 +48,7 @@ tenants:
     fieldDelimiter: "|"
 
     # Character encoding: IBM850, ISO-8859-1, UTF-8, etc.
-    charset: IBM850
+    charset: UTF-8
 
     # Timezone for date/time formatting
     timezone: America/New_York
@@ -349,7 +349,7 @@ tenants:
     errorDetectionEnabled: true
     messageDelimiter: "\r"
     fieldDelimiter: "|"
-    charset: IBM850
+    charset: UTF-8
     timezone: America/New_York
     logLevel: Patron
 
