@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,6 +34,10 @@ func TestLogout_GuardsMakeNoHTTPCall(t *testing.T) {
 		{"four segments", testLogoutAccess, "a.b.c.d", ErrInvalidRefreshToken},
 		{"six segments", testLogoutAccess, "a.b.c.d.e.f", ErrInvalidRefreshToken},
 		{"empty middle segment", testLogoutAccess, "a..c", ErrInvalidRefreshToken},
+		{"JWE empty IV", testLogoutAccess, "h.k..ct.tag", ErrInvalidRefreshToken},
+		{"JWE empty tag", testLogoutAccess, "h..iv.ct.", ErrInvalidRefreshToken},
+		{"JWE empty header", testLogoutAccess, ".k.iv.ct.tag", ErrInvalidRefreshToken},
+		{"all dots", testLogoutAccess, "....", ErrInvalidRefreshToken},
 		{"trailing dot", testLogoutAccess, "a.b.", ErrInvalidRefreshToken},
 		{"padded with spaces", testLogoutAccess, " " + testLogoutRefresh + " ", ErrInvalidRefreshToken},
 		{"empty access", "", testLogoutRefresh, ErrNoAccessToken},
@@ -104,9 +109,30 @@ func TestLogout_AcceptsEncryptedJWTShape(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := NewAuthClient(server.URL, "test-tenant").Logout(context.Background(), testLogoutAccess, "h.k.iv.ct.tag")
-	if err != nil {
-		t.Errorf("5-segment refresh token should be accepted, got %v", err)
+	for name, token := range map[string]string{
+		"JWE with encrypted key":      "h.k.iv.ct.tag",
+		"JWE direct encryption (dir)": "eyJlbmMiOiJBMjU2R0NNIiwiYWxnIjoiZGlyIn0..aXY.Y3Q.dGFn",
+	} {
+		err := NewAuthClient(server.URL, "test-tenant").Logout(context.Background(), testLogoutAccess, token)
+		if err != nil {
+			t.Errorf("%s: refresh token should be accepted, got %v", name, err)
+		}
+	}
+}
+
+func TestTokenShape_RevealsStructureOnly(t *testing.T) {
+	tests := map[string]string{
+		"h..iv.ct.tag": "5 segments, length 12, empty: 2",
+		"null":         "1 segments, length 4",
+		"a b":          "1 segments, length 3, contains whitespace",
+	}
+	for token, want := range tests {
+		if got := TokenShape(token); got != want {
+			t.Errorf("TokenShape(%q) = %q, want %q", token, got, want)
+		}
+	}
+	if shape := TokenShape(testLogoutRefresh); strings.Contains(shape, "eyJ") {
+		t.Errorf("shape must not contain token content: %q", shape)
 	}
 }
 

@@ -115,7 +115,9 @@ func LogoutTokens(pair types.TokenPair, logger *zap.Logger, sessionID, username,
 		// 204 for a session that has already ended.
 		logger.Info("Keycloak logout accepted", fields...)
 	case errors.Is(err, folio.ErrNoRefreshToken), errors.Is(err, folio.ErrInvalidRefreshToken), errors.Is(err, folio.ErrNoAccessToken):
-		logger.Warn("Keycloak logout refused by guard", append(fields, zap.String("error_class", err.Error()))...)
+		logger.Warn("Keycloak logout refused by guard", append(fields,
+			zap.String("error_class", err.Error()),
+			zap.String("refresh_token_shape", folio.TokenShape(refreshToken)))...)
 	case isClientError(err):
 		logger.Debug("Keycloak logout rejected", append(fields, statusOrClass(err))...)
 	default:

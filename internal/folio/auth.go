@@ -126,9 +126,11 @@ func (ac *AuthClient) Logout(ctx context.Context, accessToken, refreshToken stri
 	return nil
 }
 
-// isJWTShaped reports whether token is in JWT compact form: 3 (signed) or 5 (encrypted)
-// non-empty, dot-separated segments. It catches corrupted values such as "null" or a
-// truncated token that are not blank but that the server might treat as blank.
+// isJWTShaped reports whether token is in JWT compact form: 3 dot-separated segments
+// (signed, JWS) or 5 (encrypted, JWE). Every segment must be non-empty, except a JWE's
+// second segment (the encrypted key), which is empty for direct encryption ("alg":"dir",
+// RFC 7516), e.g. Okapi mod-authtoken refresh tokens. It catches corrupted values such as
+// "null" or a truncated token that are not blank but that the server might treat as blank.
 func isJWTShaped(token string) bool {
 	if strings.ContainsAny(token, " \t\r\n") {
 		return false
@@ -137,12 +139,32 @@ func isJWTShaped(token string) bool {
 	if len(segments) != 3 && len(segments) != 5 {
 		return false
 	}
-	for _, segment := range segments {
-		if segment == "" {
+	for i, segment := range segments {
+		if segment == "" && !(len(segments) == 5 && i == 1) {
 			return false
 		}
 	}
 	return true
+}
+
+// TokenShape describes a token's structure for diagnostics without revealing it:
+// the number of dot-separated segments and the 1-based positions of empty ones.
+func TokenShape(token string) string {
+	segments := strings.Split(token, ".")
+	var empty []string
+	for i, segment := range segments {
+		if segment == "" {
+			empty = append(empty, fmt.Sprint(i+1))
+		}
+	}
+	shape := fmt.Sprintf("%d segments, length %d", len(segments), len(token))
+	if len(empty) > 0 {
+		shape += ", empty: " + strings.Join(empty, ",")
+	}
+	if strings.ContainsAny(token, " \t\r\n") {
+		shape += ", contains whitespace"
+	}
+	return shape
 }
 
 // fillTokens copies the tokens from the response cookies into resp and sets ExpiresAt.
