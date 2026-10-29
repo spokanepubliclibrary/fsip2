@@ -39,52 +39,6 @@ func TestHTTPError_IsNotFound(t *testing.T) {
 	}
 }
 
-func TestHTTPError_IsBadRequest(t *testing.T) {
-	tests := []struct {
-		name       string
-		statusCode int
-		expected   bool
-	}{
-		{"400 is bad request", 400, true},
-		{"200 is not bad request", 200, false},
-		{"404 is not bad request", 404, false},
-		{"500 is not bad request", 500, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := &HTTPError{StatusCode: tt.statusCode}
-			if err.IsBadRequest() != tt.expected {
-				t.Errorf("IsBadRequest() = %v, want %v", err.IsBadRequest(), tt.expected)
-			}
-		})
-	}
-}
-
-func TestHTTPError_IsServerError(t *testing.T) {
-	tests := []struct {
-		name       string
-		statusCode int
-		expected   bool
-	}{
-		{"500 is server error", 500, true},
-		{"503 is server error", 503, true},
-		{"599 is server error", 599, true},
-		{"200 is not server error", 200, false},
-		{"404 is not server error", 404, false},
-		{"400 is not server error", 400, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := &HTTPError{StatusCode: tt.statusCode}
-			if err.IsServerError() != tt.expected {
-				t.Errorf("IsServerError() = %v, want %v", err.IsServerError(), tt.expected)
-			}
-		})
-	}
-}
-
 func TestHTTPError_ParseErrorMessage_EmptyBody(t *testing.T) {
 	err := &HTTPError{StatusCode: 500, Body: ""}
 	msg := err.ParseErrorMessage()
@@ -164,49 +118,6 @@ func TestClient_SetTimeout(t *testing.T) {
 	}
 }
 
-func TestClient_Delete_Success(t *testing.T) {
-	deleteCalled := false
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			deleteCalled = true
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL, "test-tenant")
-	err := client.Delete(context.Background(), "/some/resource/123", "test-token")
-	if err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
-	if !deleteCalled {
-		t.Error("Expected DELETE request to be made")
-	}
-}
-
-func TestClient_Delete_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL, "test-tenant")
-	err := client.Delete(context.Background(), "/some/resource/nonexistent", "test-token")
-	if err == nil {
-		t.Error("Expected error for 404 response")
-	}
-
-	if httpErr, ok := err.(*HTTPError); ok {
-		if !httpErr.IsNotFound() {
-			t.Errorf("Expected IsNotFound to be true, status=%d", httpErr.StatusCode)
-		}
-	}
-}
-
 func TestClient_PostWithTextPlainAccept_Success(t *testing.T) {
 	acceptHeader := ""
 
@@ -244,8 +155,8 @@ func TestClient_PostWithTextPlainAccept_Error(t *testing.T) {
 		t.Error("Expected error for 400 response")
 	}
 	if httpErr, ok := err.(*HTTPError); ok {
-		if !httpErr.IsBadRequest() {
-			t.Errorf("Expected IsBadRequest to be true, status=%d", httpErr.StatusCode)
+		if httpErr.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, httpErr.StatusCode)
 		}
 	}
 }

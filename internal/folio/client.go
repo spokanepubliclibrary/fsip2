@@ -74,6 +74,9 @@ func NewClient(baseURL, tenant string) *Client {
 // On each request, a context.WithTimeout deadline of this duration is applied,
 // cancelling the request if it does not complete within the allotted time.
 // This does not modify the shared HTTP client; the deadline is enforced via context.
+// No production caller as of plan 02. Retained as the hook for a future per-tenant
+// FOLIO request timeout; the c.timeout branch in the request path (Client.do) is
+// inert until it is called.
 func (c *Client) SetTimeout(timeout time.Duration) {
 	c.timeout = timeout
 }
@@ -86,16 +89,6 @@ func (c *Client) Get(ctx context.Context, path string, token string, result inte
 // Post performs a POST request
 func (c *Client) Post(ctx context.Context, path string, token string, body interface{}, result interface{}) error {
 	return c.doRequest(ctx, "POST", path, token, body, result)
-}
-
-// Put performs a PUT request
-func (c *Client) Put(ctx context.Context, path string, token string, body interface{}, result interface{}) error {
-	return c.doRequest(ctx, "PUT", path, token, body, result)
-}
-
-// Delete performs a DELETE request
-func (c *Client) Delete(ctx context.Context, path string, token string) error {
-	return c.doRequest(ctx, "DELETE", path, token, nil, nil)
 }
 
 // PostWithTextPlainAccept performs a POST request with Accept: text/plain header
@@ -301,14 +294,4 @@ func (e *HTTPError) IsUnauthorized() bool {
 // IsForbidden checks if the error is a 403 Forbidden
 func (e *HTTPError) IsForbidden() bool {
 	return e.StatusCode == http.StatusForbidden
-}
-
-// IsBadRequest checks if the error is a 400 Bad Request
-func (e *HTTPError) IsBadRequest() bool {
-	return e.StatusCode == http.StatusBadRequest
-}
-
-// IsServerError checks if the error is a 5xx server error
-func (e *HTTPError) IsServerError() bool {
-	return e.StatusCode >= 500 && e.StatusCode < 600
 }

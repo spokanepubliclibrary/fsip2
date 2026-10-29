@@ -54,8 +54,7 @@
 //   - IsNotFound(): Checks for 404 errors
 //   - IsUnauthorized(): Checks for 401 errors
 //   - IsForbidden(): Checks for 403 errors
-//   - IsBadRequest(): Checks for 400 errors
-//   - IsPermissionError(): Checks for permission-related errors
+//   - IsPermissionError(err): Package function; checks for permission-related errors
 //
 // FOLIO error responses are parsed and included in the error message.
 //
@@ -92,16 +91,19 @@
 // PatronClient (/users, /bl-users, /automated-patron-blocks, /manualblocks):
 //   - GetUserByBarcode: Lookup patron by barcode
 //   - GetUserByID: Lookup patron by UUID
-//   - Authenticate: Verify patron credentials
-//   - GetAutomatedBlocksByUserId: Get system-generated blocks
-//   - GetManualBlocksByUserId: Get staff-created blocks
+//   - VerifyPatronPin / VerifyPatronPasswordWithLogin: Verify patron credentials
+//   - GetAutomatedPatronBlocks: Get system-generated blocks
+//   - GetManualBlocks: Get staff-created blocks
+//   - GetPatronGroupByID: Get patron group details
+//   - UpdateUserExpiration: Extend a patron's expiration date (raw-map PUT)
 //
 // CirculationClient (/circulation):
-//   - PostCheckout: Check out an item to a patron
-//   - PostCheckin: Check in an item
-//   - PostRenew: Renew a loan
-//   - GetLoansByUserId: Get patron's active loans
-//   - GetRequestsByUserId: Get patron's requests (holds)
+//   - Checkout: Check out an item to a patron
+//   - Checkin: Check in an item
+//   - Renew / RenewByID: Renew a loan
+//   - GetOpenLoansByUser: Get patron's open loans
+//   - GetAvailableHolds / GetUnavailableHolds: Get patron's holds by state
+//   - GetLoansByItem: Get open loans for a specific item
 //   - GetRequestsByItem: Get requests for a specific item
 //
 // InventoryClient (/inventory, /holdings-storage, /instance-storage):
@@ -113,35 +115,49 @@
 //   - GetMaterialTypeByID: Get material type details
 //   - GetServicePointByID: Get service point details
 //
-// FeesClient (/accounts):
-//   - GetAccountsByUserId: Get patron's fees/fines
-//   - PostPayment: Record a payment
+// FeesClient (/accounts, /accounts-bulk):
+//   - GetOpenAccountsExcludingSuspended: Get patron's open fees/fines
+//   - GetEligibleAccountByID: Get one account if it is eligible for payment
+//   - PayAccount / PayBulkAccounts: Pay one account, or several in one call
+//
+// # Placeholders
+//
+// These methods are PLACEHOLDER – NOT FOR USE roadmap stubs. Each returns
+// ErrNotImplemented without making an HTTP call and is not covered by any role;
+// see each method's doc comment for the future spec:
+//   - CirculationClient: RenewAll, CreateRequest, CancelRequest
+//   - InventoryClient: UpdateItemStatus, SearchInstances, SearchInstancesByTitle,
+//     SearchInstancesByISBN
+//   - PatronClient: GetUserByUsername
 //
 // # Usage Example
 //
 //	// Create clients
+//	authClient := folio.NewAuthClient(okapiURL, tenant)
 //	patronClient := folio.NewPatronClient(okapiURL, tenant)
 //	circClient := folio.NewCirculationClient(okapiURL, tenant)
 //
-//	// Authenticate patron
-//	token, err := patronClient.Authenticate(ctx, username, password)
+//	// Log in as the kiosk user
+//	login, err := authClient.Login(ctx, username, password)
 //	if err != nil {
 //	    return fmt.Errorf("authentication failed: %w", err)
 //	}
+//	token := login.OkapiToken
 //
 //	// Lookup user
 //	user, err := patronClient.GetUserByBarcode(ctx, token, "12345678")
 //	if err != nil {
-//	    if folio.IsNotFound(err) {
+//	    var httpErr *folio.HTTPError
+//	    if errors.As(err, &httpErr) && httpErr.IsNotFound() {
 //	        return errors.New("patron not found")
 //	    }
 //	    return err
 //	}
 //
 //	// Checkout item
-//	loan, err := circClient.PostCheckout(ctx, token, &folio.CheckoutRequest{
-//	    ItemBarcode:  "ITEM123",
-//	    UserBarcode:  "12345678",
-//	    ServicePointId: spID,
+//	loan, err := circClient.Checkout(ctx, token, folio.CheckoutRequest{
+//	    ItemBarcode:    "ITEM123",
+//	    UserBarcode:    "12345678",
+//	    ServicePointID: spID,
 //	})
 package folio

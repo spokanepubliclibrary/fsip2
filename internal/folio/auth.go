@@ -23,6 +23,10 @@ const (
 // No HTTP call is made in that case.
 var ErrNoRefreshToken = errors.New("no refresh token")
 
+// ErrNotImplemented is returned by PLACEHOLDER client methods (roadmap stubs).
+// No HTTP call is made in that case.
+var ErrNotImplemented = errors.New("not implemented: placeholder")
+
 // ErrInvalidRefreshToken is returned by Logout when the refresh token is not JWT-shaped.
 // No HTTP call is made in that case.
 var ErrInvalidRefreshToken = errors.New("refresh token is not JWT-shaped")

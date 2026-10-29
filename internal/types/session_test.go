@@ -106,19 +106,6 @@ func TestHasAuthCredentials_MissingUsername(t *testing.T) {
 	}
 }
 
-func TestUpdateToken(t *testing.T) {
-	s := NewSession("s1", nil)
-	expiry := time.Now().Add(2 * time.Hour)
-	s.UpdateToken("new-token", expiry)
-
-	if s.GetAuthToken() != "new-token" {
-		t.Errorf("GetAuthToken = %q, want %q", s.GetAuthToken(), "new-token")
-	}
-	if !s.GetTokenExpiresAt().Equal(expiry) {
-		t.Errorf("GetTokenExpiresAt = %v, want %v", s.GetTokenExpiresAt(), expiry)
-	}
-}
-
 func TestUpdateActivity(t *testing.T) {
 	s := NewSession("s1", nil)
 	before := s.LastActivity

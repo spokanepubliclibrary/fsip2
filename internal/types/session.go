@@ -106,16 +106,6 @@ func (s *Session) HasAuthCredentials() bool {
 	return s.Username != "" && s.password != ""
 }
 
-// UpdateToken updates the authentication token and expiration time
-// Used for token refresh without changing other session state
-func (s *Session) UpdateToken(authToken string, expiresAt time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.AuthToken = authToken
-	s.TokenExpiresAt = expiresAt
-	s.LastActivity = time.Now()
-}
-
 // UpdateTokens replaces the access and refresh tokens and their expirations together.
 // Refresh tokens rotate, so both must always be replaced as a pair. The session's current
 // tenant is recorded as the pair's issuer.
