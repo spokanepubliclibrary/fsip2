@@ -2,6 +2,10 @@ package logging
 
 import (
 	"testing"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestShouldLogMessage(t *testing.T) {
@@ -20,10 +24,14 @@ func TestShouldLogMessage(t *testing.T) {
 		{"Debugging - Login", "93", "Debugging", true},
 		{"Debugging - Patron Info", "63", "Debugging", true},
 		{"Debugging - Checkout", "11", "Debugging", true},
+		{"Debugging - SC Status", "99", "Debugging", true},
+		{"Debugging - ACS Status", "98", "Debugging", true},
 
-		// Full level - all except 93/94 (login)
+		// Full level - all except 93/94 (login) and 98/99 (client heartbeat)
 		{"Full - Login Request", "93", "Full", false},
 		{"Full - Login Response", "94", "Full", false},
+		{"Full - SC Status", "99", "Full", false},
+		{"Full - ACS Status", "98", "Full", false},
 		{"Full - Patron Info Request", "63", "Full", true},
 		{"Full - Patron Info Response", "64", "Full", true},
 		{"Full - Checkout", "11", "Full", true},
@@ -35,6 +43,7 @@ func TestShouldLogMessage(t *testing.T) {
 		{"Patron - Patron Info Response", "64", "Patron", true},
 		{"Patron - Checkout", "11", "Patron", false},
 		{"Patron - Checkin", "09", "Patron", false},
+		{"Patron - SC Status", "99", "Patron", false},
 
 		// Invalid/unknown log level - defaults to None
 		{"Invalid - Login", "93", "Invalid", false},
@@ -47,6 +56,70 @@ func TestShouldLogMessage(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("ShouldLogMessage(%q, %q) = %v, want %v",
 					tt.messageCode, tt.logLevel, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsQuietMessage(t *testing.T) {
+	tests := []struct {
+		name        string
+		messageCode string
+		logLevel    string
+		want        bool
+	}{
+		{"Debugging - SC Status", "99", "Debugging", false},
+		{"Debugging - ACS Status", "98", "Debugging", false},
+		{"Full - SC Status", "99", "Full", true},
+		{"Full - ACS Status", "98", "Full", true},
+		{"Patron - SC Status", "99", "Patron", true},
+		{"None - SC Status", "99", "None", true},
+		{"Empty - SC Status", "99", "", true},
+		{"Full - Checkout", "11", "Full", false},
+		{"Full - Login", "93", "Full", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsQuietMessage(tt.messageCode, tt.logLevel)
+			if got != tt.want {
+				t.Errorf("IsQuietMessage(%q, %q) = %v, want %v",
+					tt.messageCode, tt.logLevel, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScopedLogger(t *testing.T) {
+	tests := []struct {
+		name        string
+		messageCode string
+		logLevel    string
+		wantLevels  []zapcore.Level
+	}{
+		{"Full heartbeat drops Info/Debug", "99", "Full", []zapcore.Level{zapcore.WarnLevel, zapcore.ErrorLevel}},
+		{"Debugging heartbeat keeps all", "99", "Debugging", []zapcore.Level{zapcore.DebugLevel, zapcore.InfoLevel, zapcore.WarnLevel, zapcore.ErrorLevel}},
+		{"Full checkout keeps all", "11", "Full", []zapcore.Level{zapcore.DebugLevel, zapcore.InfoLevel, zapcore.WarnLevel, zapcore.ErrorLevel}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, logs := observer.New(zapcore.DebugLevel)
+			logger := ScopedLogger(zap.New(core), tt.messageCode, tt.logLevel)
+
+			logger.Debug("debug")
+			logger.Info("info")
+			logger.Warn("warn")
+			logger.Error("error")
+
+			entries := logs.All()
+			if len(entries) != len(tt.wantLevels) {
+				t.Fatalf("got %d entries, want %d", len(entries), len(tt.wantLevels))
+			}
+			for i, want := range tt.wantLevels {
+				if entries[i].Level != want {
+					t.Errorf("entry %d level = %v, want %v", i, entries[i].Level, want)
+				}
 			}
 		})
 	}
