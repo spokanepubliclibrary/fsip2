@@ -1334,6 +1334,7 @@ Every log entry emitted by FSIP2 includes a `"type"` field that identifies the o
 - `sip_request` and `sip_response` entries are emitted exclusively by `logRequest()` and `logResponse()` in `internal/handlers/base.go`. They mark the SIP2 protocol boundary only; handler-internal processing logs (e.g. "Checkout request", "Patron information lookup") are classified as `application`.
 - `folio_request` and `folio_response` entries are emitted by `internal/folio/client.go` inside `doRequestWithCustomAccept()`. They are **always at `debug` level** and will not appear in production deployments running at `info` level or above.
 - Token expiration and token refresh entries (emitted by `internal/folio/auth.go` and `internal/handlers/base.go`) carry `type: "application"` and are **always at `debug` level**.
+- SC Status (99) / ACS Status (98) client heartbeats emit **no** `info` or `debug` entries of any `type` unless the tenant `logLevel` is `Debugging` (see `logging.IsQuietMessage` / `logging.ScopedLogger` in `internal/logging/message_filter.go`). `warn` and `error` entries on the heartbeat path are always emitted. Heartbeat volume remains visible via the `fsip2_messages_total{message_type="99"}` metric.
 
 ---
 

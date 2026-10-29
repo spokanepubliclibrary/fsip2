@@ -16,6 +16,8 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/tenant"
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // mockConn is a mock net.Conn for testing
@@ -638,6 +640,62 @@ func TestConnectionSessionActivityUpdate(t *testing.T) {
 	newIdleTime := session.GetIdleTime()
 	if newIdleTime >= initialIdleTime {
 		t.Error("Session activity should have been updated during message processing")
+	}
+}
+
+// TestConnection_HeartbeatLogging verifies the SC Status (99) / ACS Status (98) round trip
+// is only logged when the tenant log level is Debugging
+func TestConnection_HeartbeatLogging(t *testing.T) {
+	tests := []struct {
+		logLevel string
+		wantLogs bool
+	}{
+		{"Debugging", true},
+		{"Full", false},
+		{"Patron", false},
+		{"None", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.logLevel, func(t *testing.T) {
+			tc := &config.TenantConfig{
+				Tenant:            "test-tenant",
+				MessageDelimiter:  "\r",
+				FieldDelimiter:    "|",
+				LogLevel:          tt.logLevel,
+				SupportedMessages: []config.MessageSupport{{Code: "99", Enabled: true}},
+			}
+			core, logs := observer.New(zapcore.DebugLevel)
+			cfg := &config.Config{}
+			srv, _ := NewServer(cfg, zap.New(core))
+			handlers := map[parser.MessageCode]MessageHandler{
+				parser.SCStatus: &mockHandlerFunc{fn: func(ctx context.Context, msg *parser.Message, s *types.Session) (string, error) {
+					return "98YYYNYN03000320261029    2113062.00|AOtest|", nil
+				}},
+			}
+			conn := NewConnection(newMockConn(""), types.NewSession("test-session", tc), tenant.NewService(cfg), handlers, srv, 6443, "127.0.0.1")
+			logs.TakeAll() // discard server construction logs
+
+			raw, err := conn.readMessage(bufio.NewReader(strings.NewReader("9900302.00\r")))
+			if err != nil {
+				t.Fatalf("readMessage() error = %v", err)
+			}
+			resp, err := conn.processMessage(context.Background(), raw)
+			if err != nil {
+				t.Fatalf("processMessage() error = %v", err)
+			}
+			if err := conn.sendMessage(resp); err != nil {
+				t.Fatalf("sendMessage() error = %v", err)
+			}
+
+			got := logs.TakeAll()
+			if tt.wantLogs {
+				// received, invoking handler, handler generated response, sent, 2x debug send details
+				assert.GreaterOrEqual(t, len(got), 6, "Debugging should log the heartbeat round trip")
+			} else {
+				assert.Empty(t, got, "heartbeat should not be logged at %s", tt.logLevel)
+			}
+		})
 	}
 }
 

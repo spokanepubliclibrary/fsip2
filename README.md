@@ -232,8 +232,8 @@ projectroot/
 
 Configure log level in the YAML file with the following options:
 
-- **Debugging**: All messages (inbound and outbound) are logged. Service logins, message format and content, etc. with no obfuscation.
-- **Full**: All messages (inbound and outbound) are logged. Excludes 93 & 94 login messages and PINs are obfuscated.
+- **Debugging**: All messages (inbound and outbound) are logged. Service logins, 98 & 99 client heartbeats, message format and content, etc. with no obfuscation.
+- **Full**: All messages (inbound and outbound) are logged. Excludes 93 & 94 login messages and 98 & 99 client heartbeat (SC/ACS Status) messages, and PINs are obfuscated.
 - **Patron**: Messages (63 inbound and 64 outbound) related to patron information are logged with PINs obfuscated.
 - **None**: Default. No logging takes place.
 

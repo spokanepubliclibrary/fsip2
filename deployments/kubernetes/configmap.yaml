@@ -68,8 +68,8 @@ data:
 
         # Log level for SIP2 messages
         # Options: Debugging, Full, Patron, None
-        # - Debugging: All messages logged with no obfuscation
-        # - Full: All messages except 93/94 (login), PINs obfuscated
+        # - Debugging: All messages (including 98/99 client heartbeat) logged with no obfuscation
+        # - Full: All messages except 93/94 (login) and 98/99 (client heartbeat), PINs obfuscated
         # - Patron: Only 63/64 (patron info) messages, PINs obfuscated
         # - None: No message logging (default)
         logLevel: Full

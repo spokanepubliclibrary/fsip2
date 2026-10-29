@@ -9,7 +9,49 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/parser"
 	"github.com/spokanepubliclibrary/fsip2/internal/types"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+// TestSCStatusHandler_Handle_HeartbeatLogging verifies SC Status (99/98) heartbeats are
+// only logged when the tenant log level is Debugging
+func TestSCStatusHandler_Handle_HeartbeatLogging(t *testing.T) {
+	tests := []struct {
+		logLevel    string
+		wantEntries int
+	}{
+		{"Debugging", 3}, // Handling SIP2 message, SC Status request, Handler success
+		{"Full", 0},
+		{"Patron", 0},
+		{"None", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.logLevel, func(t *testing.T) {
+			tenantConfig := &config.TenantConfig{
+				Tenant:           "test-library",
+				MessageDelimiter: "\r",
+				FieldDelimiter:   "|",
+				LogLevel:         tt.logLevel,
+			}
+			core, logs := observer.New(zapcore.DebugLevel)
+			handler := NewSCStatusHandler(zap.New(core), tenantConfig)
+			session := types.NewSession("test-session-123", tenantConfig)
+			msg := &parser.Message{Code: parser.SCStatus, Fields: make(map[string]string)}
+
+			response, err := handler.Handle(context.Background(), msg, session)
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if !strings.HasPrefix(response, "98") {
+				t.Errorf("Expected response to start with '98', got: %s", response)
+			}
+			if got := logs.Len(); got != tt.wantEntries {
+				t.Errorf("logLevel %q: got %d log entries, want %d", tt.logLevel, got, tt.wantEntries)
+			}
+		})
+	}
+}
 
 func TestSCStatusHandler_Handle_Success(t *testing.T) {
 	// Create test configuration
