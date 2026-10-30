@@ -6,37 +6,89 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/spokanepubliclibrary/fsip2/tests/fixtures"
 )
 
-// tokenEntry tracks a token with its creation time for expiration-aware validation
+// tokenEntry tracks an issued access token for expiration-aware validation
 type tokenEntry struct {
 	Token     string
+	Username  string
+	SessionID int // Mock Keycloak session the token belongs to
 	CreatedAt time.Time
+	ExpiresAt time.Time
 }
+
+// refreshEntry tracks an issued refresh token and the access token issued with it
+type refreshEntry struct {
+	Username    string
+	AccessToken string
+	SessionID   int // Mock Keycloak session; carried over when the token is rotated
+	ExpiresAt   time.Time
+}
+
+// logoutExpiredAccessGrace is how long past expiry the gateway still accepts an access token
+// on /authn/logout. Measured on Trillium: ~30 s worked (script 21-A), ~5 min got 401 (V4b-4).
+const logoutExpiredAccessGrace = 30 * time.Second
+
+// Default token lifetimes when TokenLifetime / RefreshTokenLifetime are 0 (seconds)
+const (
+	defaultAccessTokenLifetime  = 3600
+	defaultRefreshTokenLifetime = 86400
+)
 
 // FolioMockServer is a mock FOLIO API server for testing
 type FolioMockServer struct {
-	Server          *httptest.Server
-	Users           map[string]*models.User
-	Items           map[string]*models.Item
-	Loans           map[string]*models.Loan
-	Holdings        map[string]*models.Holdings         // id -> holdings
-	Instances       map[string]*models.Instance         // id -> instance
-	ManualBlocks    map[string][]*models.ManualBlock     // userID -> []block
-	AutomatedBlocks map[string]*models.AutomatedPatronBlock // userID -> blocks
-	Accounts        map[string]*models.Account          // accountID -> account
-	PatronPINs      map[string]string                   // userID -> valid PIN ("" = reject all PINs)
-	Tokens          map[string]string                   // username -> token (legacy)
-	tokenEntries    map[string]*tokenEntry              // token -> entry with timestamp
-	TokenLifetime   int                                 // ExpiresIn value to return (0 = use default 3600)
-	RejectLogins    bool                                // When true, reject all login attempts (for testing refresh failure)
-	LoginCount      int                                 // Number of successful logins (for verification)
-	BulkPayCallCount int                               // Number of POST /accounts-bulk/pay calls received
-	BulkPayRequests  []models.Payment                  // All bulk payment request bodies received
+	Server               *httptest.Server
+	Users                map[string]*models.User
+	Items                map[string]*models.Item
+	Loans                map[string]*models.Loan
+	Holdings             map[string]*models.Holdings             // id -> holdings
+	Instances            map[string]*models.Instance             // id -> instance
+	ManualBlocks         map[string][]*models.ManualBlock        // userID -> []block
+	AutomatedBlocks      map[string]*models.AutomatedPatronBlock // userID -> blocks
+	Accounts             map[string]*models.Account              // accountID -> account
+	PatronPINs           map[string]string                       // userID -> valid PIN ("" = reject all PINs)
+	Tokens               map[string]string                       // username -> token (legacy)
+	tokenEntries         map[string]*tokenEntry                  // access token -> entry
+	refreshEntries       map[string]*refreshEntry                // refresh token -> entry (rotated on use)
+	TokenLifetime        int                                     // Access token lifetime in seconds (0 = default 3600)
+	RefreshTokenLifetime int                                     // Refresh token lifetime in seconds (0 = default 86400)
+	RejectLogins         bool                                    // When true, reject all login attempts (for testing renewal failure)
+	RejectRefresh        bool                                    // When true, reject all /authn/refresh calls with 401
+	LoginCount           int                                     // Number of successful logins (for verification)
+	RefreshCount         int                                     // Number of successful refreshes
+	DeprecatedLoginCount int                                     // Number of calls to the removed /authn/login endpoint
+	authMu               sync.Mutex                              // Guards token bookkeeping and counters (handlers run concurrently)
+	tokenSeq             int                                     // Makes issued tokens unique
+	sessionSeq           int                                     // Mock Keycloak session IDs (one per login)
+	issuedAccess         map[string]*tokenEntry                  // every access token ever issued (never deleted; for /authn/logout)
+	issuedRefresh        map[string]int                          // every refresh token ever issued -> session ID (never deleted)
+	LogoutCount          int                                     // /authn/logout calls that ended (or re-ended) one session: 204
+	TrapTriggeredCount   int                                     // /authn/logout calls that ended EVERY session of a user (the blank-refresh trap)
+	LogoutHeaderCount    int                                     // /authn/logout calls that carried an X-Okapi-Token header (fsip2 must never send one)
+	LogoutTenants        []string                                // X-Okapi-Tenant of each /authn/logout call
+	LogoutDelay          time.Duration                           // Delay before answering /authn/logout (timeout and async tests)
+	RefreshStatus        int                                     // When non-zero, /authn/refresh answers with this status (e.g. 503)
+	BulkPayCallCount     int                                     // Number of POST /accounts-bulk/pay calls received
+	BulkPayRequests      []models.Payment                        // All bulk payment request bodies received
+	Requests             map[string]*models.Request              // requestID -> request
+	Groups               map[string]*models.PatronGroup          // id -> patron group
+	Locations            map[string]*models.Location             // id -> location
+	MaterialTypes        map[string]*models.MaterialType         // id -> material type
+	ServicePoints        map[string]*models.ServicePoint         // id -> service point
+	UserPutCount         int                                     // Number of successful PUT /users/{id} calls
+
+	// Capability enforcement (Eureka emulation). Off by default. When on, every protected
+	// request must carry a token whose user holds the endpoint's capability, looked up in
+	// folio.Capabilities; otherwise the gateway's 403 is returned. Unmapped endpoints are
+	// denied too, so a new FOLIO call without a capability-table row fails the tests.
+	enforceCapabilities bool
+	userCapabilities    map[string]map[string]bool // username -> capability set
+	capabilityDenials   []string                   // "METHOD /path -> capability" for each 403
 }
 
 // NewFolioMockServer creates a new mock FOLIO server
@@ -53,6 +105,14 @@ func NewFolioMockServer() *FolioMockServer {
 		PatronPINs:      make(map[string]string),
 		Tokens:          make(map[string]string),
 		tokenEntries:    make(map[string]*tokenEntry),
+		refreshEntries:  make(map[string]*refreshEntry),
+		issuedAccess:    make(map[string]*tokenEntry),
+		issuedRefresh:   make(map[string]int),
+		Requests:        make(map[string]*models.Request),
+		Groups:          make(map[string]*models.PatronGroup),
+		Locations:       make(map[string]*models.Location),
+		MaterialTypes:   make(map[string]*models.MaterialType),
+		ServicePoints:   make(map[string]*models.ServicePoint),
 	}
 
 	// Create test server
@@ -78,22 +138,40 @@ func (m *FolioMockServer) GetURL() string {
 func (m *FolioMockServer) handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	// /authn/* endpoints are public (no X-Okapi-Token required), as on Eureka and Okapi
+	if strings.HasPrefix(r.URL.Path, "/authn/") {
+		m.handleAuthn(w, r)
+		return
+	}
+
 	// Check authentication for protected endpoints
-	if !strings.HasPrefix(r.URL.Path, "/authn/login") {
-		token := r.Header.Get("X-Okapi-Token")
-		if token == "" || !m.isValidToken(token) {
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
-			return
-		}
+	token := r.Header.Get("X-Okapi-Token")
+	if token == "" || !m.isValidToken(token) {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	if !m.authorizeCapability(w, r, token) {
+		return
 	}
 
 	// Route requests
 	switch {
-	case strings.HasPrefix(r.URL.Path, "/authn/login"):
-		m.handleLogin(w, r)
+	case strings.HasPrefix(r.URL.Path, "/users/"):
+		m.handleUserByID(w, r)
 	case strings.HasPrefix(r.URL.Path, "/users"):
 		m.handleUsers(w, r)
+	case strings.HasPrefix(r.URL.Path, "/circulation/requests"):
+		m.handleRequests(w, r)
+	case strings.HasPrefix(r.URL.Path, "/groups/"):
+		serveByID(w, r, m.Groups)
+	case strings.HasPrefix(r.URL.Path, "/locations/"):
+		serveByID(w, r, m.Locations)
+	case strings.HasPrefix(r.URL.Path, "/material-types/"):
+		serveByID(w, r, m.MaterialTypes)
+	case strings.HasPrefix(r.URL.Path, "/service-points/"):
+		serveByID(w, r, m.ServicePoints)
 	case strings.HasPrefix(r.URL.Path, "/circulation/check-out"):
 		m.handleCheckout(w, r)
 	case strings.HasPrefix(r.URL.Path, "/circulation/check-in"):
@@ -124,7 +202,28 @@ func (m *FolioMockServer) handler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleLogin handles authentication requests
+// handleAuthn routes the /authn/* endpoints
+func (m *FolioMockServer) handleAuthn(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/authn/login-with-expiry":
+		m.handleLogin(w, r)
+	case "/authn/refresh":
+		m.handleRefresh(w, r)
+	case "/authn/logout":
+		m.handleLogout(w, r)
+	default:
+		// Includes the deprecated /authn/login, which fsip2 must never call
+		if r.URL.Path == "/authn/login" {
+			m.authMu.Lock()
+			m.DeprecatedLoginCount++
+			m.authMu.Unlock()
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+	}
+}
+
+// handleLogin handles /authn/login-with-expiry: tokens in Set-Cookie, expirations in the body
 func (m *FolioMockServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -141,7 +240,10 @@ func (m *FolioMockServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject logins if configured (for testing refresh failure)
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+
+	// Reject logins if configured (for testing renewal failure)
 	if m.RejectLogins {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{"error": "service unavailable"})
@@ -150,31 +252,198 @@ func (m *FolioMockServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Check credentials
 	if loginReq.Username == "testuser" && loginReq.Password == "testpass" {
-		token := fmt.Sprintf("token-%s-%d", loginReq.Username, time.Now().UnixNano())
-		m.Tokens[loginReq.Username] = token
-		m.tokenEntries[token] = &tokenEntry{
-			Token:     token,
-			CreatedAt: time.Now(),
-		}
 		m.LoginCount++
-
-		expiresIn := 3600
-		if m.TokenLifetime > 0 {
-			expiresIn = m.TokenLifetime
-		}
-
-		response := models.LoginResponse{
-			AccessToken:  token,
-			RefreshToken: "refresh-" + token,
-			ExpiresIn:    expiresIn,
-		}
-
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(response)
+		m.sessionSeq++ // Each password login starts its own Keycloak session
+		m.issueTokens(w, loginReq.Username, m.sessionSeq)
 	} else {
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"error": "invalid credentials"})
 	}
+}
+
+// handleRefresh handles /authn/refresh: requires the folioRefreshToken cookie and rotates it
+func (m *FolioMockServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+
+	cookie, err := r.Cookie("folioRefreshToken")
+	if err != nil || cookie.Value == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "no refresh token"})
+		return
+	}
+
+	if m.RejectRefresh {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "refresh rejected"})
+		return
+	}
+	if m.RefreshStatus != 0 {
+		w.WriteHeader(m.RefreshStatus)
+		json.NewEncoder(w).Encode(map[string]string{"error": "refresh failed"})
+		return
+	}
+
+	// Trillium answers a reused (rotated) refresh token with 422 (test tenant, gate V3)
+	entry, ok := m.refreshEntries[cookie.Value]
+	if !ok || time.Now().After(entry.ExpiresAt) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid refresh token"})
+		return
+	}
+
+	// Rotation: the old refresh token can never be used again
+	delete(m.refreshEntries, cookie.Value)
+
+	m.RefreshCount++
+	m.issueTokens(w, entry.Username, entry.SessionID)
+}
+
+// handleLogout emulates /authn/logout as measured on Trillium (01b, PermissionTesting
+// scripts 20, 21 and 22). The access token may come as the X-Okapi-Token header or the
+// folioAccessToken cookie; the refresh token only as the folioRefreshToken cookie.
+//
+//	access + blank/whitespace/missing refresh -> TRAP: every session of the user ends, 204
+//	no access token                           -> 422, nothing ends
+//	access expired more than ~30 s            -> 401, nothing ends
+//	refresh ever issued (current, rotated or already logged out) -> its session ends, 204
+//	unknown / garbage refresh                 -> 422, nothing ends
+func (m *FolioMockServer) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	m.authMu.Lock()
+	delay := m.LogoutDelay
+	m.authMu.Unlock()
+	if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
+	}
+
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+
+	m.LogoutTenants = append(m.LogoutTenants, r.Header.Get("X-Okapi-Tenant"))
+	access := r.Header.Get("X-Okapi-Token")
+	if access != "" {
+		m.LogoutHeaderCount++
+	} else if c, err := r.Cookie("folioAccessToken"); err == nil {
+		access = c.Value
+	}
+	refresh := ""
+	if c, err := r.Cookie("folioRefreshToken"); err == nil {
+		refresh = c.Value
+	}
+
+	if access == "" {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		return
+	}
+
+	accessEntry, known := m.issuedAccess[access]
+	if !known {
+		// Legacy tokens seeded directly into Tokens have no expiry
+		for username, t := range m.Tokens {
+			if t == access {
+				accessEntry, known = &tokenEntry{Token: t, Username: username, ExpiresAt: time.Now().Add(time.Hour)}, true
+				break
+			}
+		}
+	}
+	if !known || time.Now().After(accessEntry.ExpiresAt.Add(logoutExpiredAccessGrace)) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
+	if strings.TrimSpace(refresh) == "" {
+		m.TrapTriggeredCount++
+		m.invalidateUserLocked(accessEntry.Username)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	sessionID, issued := m.issuedRefresh[refresh]
+	if !issued {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		return
+	}
+	m.LogoutCount++
+	m.invalidateSessionLocked(sessionID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// invalidateSessionLocked ends one mock Keycloak session. Caller must hold authMu.
+func (m *FolioMockServer) invalidateSessionLocked(sessionID int) {
+	for token, entry := range m.tokenEntries {
+		if entry.SessionID == sessionID {
+			delete(m.tokenEntries, token)
+		}
+	}
+	for token, entry := range m.refreshEntries {
+		if entry.SessionID == sessionID {
+			delete(m.refreshEntries, token)
+		}
+	}
+}
+
+// invalidateUserLocked ends every mock Keycloak session of username. Caller must hold authMu.
+func (m *FolioMockServer) invalidateUserLocked(username string) {
+	for token, entry := range m.tokenEntries {
+		if entry.Username == username {
+			delete(m.tokenEntries, token)
+		}
+	}
+	for token, entry := range m.refreshEntries {
+		if entry.Username == username {
+			delete(m.refreshEntries, token)
+		}
+	}
+	delete(m.Tokens, username)
+}
+
+// issueTokens creates and records a new access/refresh token pair for a mock Keycloak
+// session and writes a login-with-expiry style response. Caller must hold authMu.
+func (m *FolioMockServer) issueTokens(w http.ResponseWriter, username string, sessionID int) {
+	now := time.Now()
+	accessLifetime := defaultAccessTokenLifetime
+	if m.TokenLifetime > 0 {
+		accessLifetime = m.TokenLifetime
+	}
+	refreshLifetime := defaultRefreshTokenLifetime
+	if m.RefreshTokenLifetime > 0 {
+		refreshLifetime = m.RefreshTokenLifetime
+	}
+	accessExp := now.Add(time.Duration(accessLifetime) * time.Second)
+	refreshExp := now.Add(time.Duration(refreshLifetime) * time.Second)
+
+	m.tokenSeq++ // UnixNano alone collides on coarse clocks (Windows)
+	token := fmt.Sprintf("token-%s-%d-%d", username, now.UnixNano(), m.tokenSeq)
+	refresh := "eyJtb2NrIjoicmVmcmVzaCJ9." + strings.ReplaceAll(token, ".", "-") + ".c2ln" // JWT-shaped (3 segments)
+
+	entry := &tokenEntry{Token: token, Username: username, SessionID: sessionID, CreatedAt: now, ExpiresAt: accessExp}
+	m.Tokens[username] = token
+	m.tokenEntries[token] = entry
+	m.issuedAccess[token] = entry
+	m.refreshEntries[refresh] = &refreshEntry{Username: username, AccessToken: token, SessionID: sessionID, ExpiresAt: refreshExp}
+	m.issuedRefresh[refresh] = sessionID
+
+	http.SetCookie(w, &http.Cookie{Name: "folioAccessToken", Value: token, Path: "/", MaxAge: accessLifetime, HttpOnly: true})
+	http.SetCookie(w, &http.Cookie{Name: "folioRefreshToken", Value: refresh, Path: "/authn", MaxAge: refreshLifetime, HttpOnly: true})
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{
+		"accessTokenExpiration":  accessExp.UTC().Format(time.RFC3339Nano),
+		"refreshTokenExpiration": refreshExp.UTC().Format(time.RFC3339Nano),
+	})
 }
 
 // handleUsers handles user queries
@@ -306,6 +575,8 @@ func (m *FolioMockServer) handleRenew(w http.ResponseWriter, r *http.Request) {
 	var renewReq struct {
 		ItemBarcode string `json:"itemBarcode"`
 		UserBarcode string `json:"userBarcode"`
+		ItemID      string `json:"itemId"` // renew-by-id
+		UserID      string `json:"userId"` // renew-by-id
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&renewReq); err != nil {
@@ -313,13 +584,17 @@ func (m *FolioMockServer) handleRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return renewed loan
+	// Return renewed loan (renew-by-barcode keeps the barcode as ItemID, as before)
+	itemID, userID := renewReq.ItemBarcode, renewReq.UserBarcode
+	if renewReq.ItemID != "" {
+		itemID, userID = renewReq.ItemID, renewReq.UserID
+	}
 	now := time.Now()
 	dueDate := now.Add(14 * 24 * time.Hour)
 	loan := &models.Loan{
 		ID:           fmt.Sprintf("loan-%d", time.Now().UnixNano()),
-		ItemID:       renewReq.ItemBarcode,
-		UserID:       renewReq.UserBarcode,
+		ItemID:       itemID,
+		UserID:       userID,
 		DueDate:      &dueDate,
 		RenewalCount: 1,
 		Status: models.LoanStatus{
@@ -331,8 +606,21 @@ func (m *FolioMockServer) handleRenew(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(loan)
 }
 
-// handleItems handles item queries
+// handleItems handles item queries (GET /inventory/items?query=barcode==X) and
+// GET /inventory/items/{id}
 func (m *FolioMockServer) handleItems(w http.ResponseWriter, r *http.Request) {
+	if id := strings.TrimPrefix(r.URL.Path, "/inventory/items/"); id != r.URL.Path && id != "" {
+		for _, item := range m.Items {
+			if item.ID == id {
+				json.NewEncoder(w).Encode(item)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "item not found"})
+		return
+	}
+
 	query := r.URL.Query().Get("query")
 
 	// Extract barcode from query
@@ -369,11 +657,14 @@ func (m *FolioMockServer) handleItems(w http.ResponseWriter, r *http.Request) {
 func (m *FolioMockServer) handleLoans(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("query")
 
+	// The ID runs to the next space: fsip2 sends "userId==X and status.name==Open"
 	var userID string
 	if strings.Contains(query, "userId==") {
 		parts := strings.Split(query, "userId==")
 		if len(parts) > 1 {
-			userID = strings.Trim(parts[1], "\"")
+			if fields := strings.Fields(parts[1]); len(fields) > 0 {
+				userID = strings.Trim(fields[0], "\"")
+			}
 		}
 	}
 
@@ -395,20 +686,15 @@ func (m *FolioMockServer) handleLoans(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// isValidToken checks if a token is valid (and not expired when TokenLifetime is set)
+// isValidToken checks if an access token was issued and has not expired
 func (m *FolioMockServer) isValidToken(token string) bool {
-	// Check time-aware token entries first
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+
 	if entry, ok := m.tokenEntries[token]; ok {
-		if m.TokenLifetime > 0 {
-			// Check if token has expired
-			expiry := entry.CreatedAt.Add(time.Duration(m.TokenLifetime) * time.Second)
-			if time.Now().After(expiry) {
-				return false
-			}
-		}
-		return true
+		return time.Now().Before(entry.ExpiresAt)
 	}
-	// Fallback to legacy token check
+	// Fallback to legacy token check (tests that seed Tokens directly)
 	for _, t := range m.Tokens {
 		if t == token {
 			return true
@@ -419,22 +705,121 @@ func (m *FolioMockServer) isValidToken(token string) bool {
 
 // GetLoginCount returns the number of successful logins
 func (m *FolioMockServer) GetLoginCount() int {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
 	return m.LoginCount
 }
 
-// SetTokenLifetime sets the token lifetime in seconds for new tokens
+// GetRefreshCount returns the number of successful /authn/refresh calls
+func (m *FolioMockServer) GetRefreshCount() int {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	return m.RefreshCount
+}
+
+// GetDeprecatedLoginCount returns the number of calls to the removed /authn/login endpoint
+func (m *FolioMockServer) GetDeprecatedLoginCount() int {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	return m.DeprecatedLoginCount
+}
+
+// SetTokenLifetime sets the access token lifetime in seconds for new tokens
 func (m *FolioMockServer) SetTokenLifetime(seconds int) {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
 	m.TokenLifetime = seconds
+}
+
+// SetRefreshTokenLifetime sets the refresh token lifetime in seconds for new tokens
+func (m *FolioMockServer) SetRefreshTokenLifetime(seconds int) {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	m.RefreshTokenLifetime = seconds
 }
 
 // SetRejectLogins configures whether to reject all login attempts
 func (m *FolioMockServer) SetRejectLogins(reject bool) {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
 	m.RejectLogins = reject
 }
 
-// InvalidateAllTokens removes all token entries (simulates FOLIO token revocation)
+// SetRejectRefresh configures whether to reject all /authn/refresh calls
+func (m *FolioMockServer) SetRejectRefresh(reject bool) {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	m.RejectRefresh = reject
+}
+
+// GetLogoutCount returns the number of /authn/logout calls that ended one session (204)
+func (m *FolioMockServer) GetLogoutCount() int {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	return m.LogoutCount
+}
+
+// GetTrapTriggeredCount returns the number of /authn/logout calls that ended every session
+// of a user. Any value above 0 means fsip2 sent a logout without a usable refresh token.
+func (m *FolioMockServer) GetTrapTriggeredCount() int {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	return m.TrapTriggeredCount
+}
+
+// GetLogoutHeaderCount returns the number of /authn/logout calls that carried X-Okapi-Token
+func (m *FolioMockServer) GetLogoutHeaderCount() int {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	return m.LogoutHeaderCount
+}
+
+// GetLogoutTenants returns the X-Okapi-Tenant header of each /authn/logout call, in order
+func (m *FolioMockServer) GetLogoutTenants() []string {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	return append([]string(nil), m.LogoutTenants...)
+}
+
+// SetLogoutDelay delays every /authn/logout answer by d
+func (m *FolioMockServer) SetLogoutDelay(d time.Duration) {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	m.LogoutDelay = d
+}
+
+// SetRefreshStatus makes /authn/refresh answer with status (0 restores normal behaviour)
+func (m *FolioMockServer) SetRefreshStatus(status int) {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	m.RefreshStatus = status
+}
+
+// ExpireAccessToken sets an issued access token's server-side expiry (e.g. in the past, to
+// make the gateway answer 401 on /authn/logout as on Trillium)
+func (m *FolioMockServer) ExpireAccessToken(token string, expiresAt time.Time) {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	if entry, ok := m.issuedAccess[token]; ok {
+		entry.ExpiresAt = expiresAt
+	}
+}
+
+// IsRefreshTokenAlive reports whether refreshToken would still be accepted by /authn/refresh
+// (the "alive" check used on the test tenant), without rotating it.
+func (m *FolioMockServer) IsRefreshTokenAlive(refreshToken string) bool {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	entry, ok := m.refreshEntries[refreshToken]
+	return ok && time.Now().Before(entry.ExpiresAt)
+}
+
+// InvalidateAllTokens removes all access and refresh tokens (simulates FOLIO token revocation)
 func (m *FolioMockServer) InvalidateAllTokens() {
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
 	m.tokenEntries = make(map[string]*tokenEntry)
+	m.refreshEntries = make(map[string]*refreshEntry)
 	m.Tokens = make(map[string]string)
 }
 
@@ -453,9 +838,32 @@ func (m *FolioMockServer) addDefaultTestData() {
 		m.AddItem(item.Barcode, &item)
 	}
 
-	// Holdings and instances remain hard-coded (no fixture files for these yet).
-	m.Holdings["holdings-001"] = &models.Holdings{ID: "holdings-001", InstanceID: "instance-001"}
-	m.Instances["instance-001"] = &models.Instance{ID: "instance-001", Title: "Test Book Title"}
+	// Reference records the default item and session point at (holdings, instance,
+	// location, material type, service point test-sp-uuid, patron group "adults").
+	var holdings models.Holdings
+	if err := fixtures.LoadFixtureAs("reference/holdings.json", &holdings); err == nil {
+		m.AddHoldings(holdings.ID, &holdings)
+	}
+	var instance models.Instance
+	if err := fixtures.LoadFixtureAs("reference/instance.json", &instance); err == nil {
+		m.AddInstance(instance.ID, &instance)
+	}
+	var group models.PatronGroup
+	if err := fixtures.LoadFixtureAs("reference/patron_group.json", &group); err == nil {
+		m.AddGroup(&group)
+	}
+	var location models.Location
+	if err := fixtures.LoadFixtureAs("reference/location.json", &location); err == nil {
+		m.AddLocation(&location)
+	}
+	var materialType models.MaterialType
+	if err := fixtures.LoadFixtureAs("reference/material_type.json", &materialType); err == nil {
+		m.AddMaterialType(&materialType)
+	}
+	var servicePoint models.ServicePoint
+	if err := fixtures.LoadFixtureAs("reference/service_point.json", &servicePoint); err == nil {
+		m.AddServicePoint(&servicePoint)
+	}
 }
 
 // AddUser adds a user to the mock server

@@ -3,6 +3,9 @@ package logging
 import (
 	"regexp"
 	"strings"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // MessageLogLevel represents the SIP2 message logging level from tenant config
@@ -11,13 +14,35 @@ type MessageLogLevel string
 const (
 	// LogLevelDebugging logs all messages with no obfuscation
 	LogLevelDebugging MessageLogLevel = "Debugging"
-	// LogLevelFull logs all messages except 93/94 (login), PINs obfuscated
+	// LogLevelFull logs all messages except 93/94 (login) and 98/99 (client heartbeat), PINs obfuscated
 	LogLevelFull MessageLogLevel = "Full"
 	// LogLevelPatron logs only 63/64 (patron info) messages, PINs obfuscated
 	LogLevelPatron MessageLogLevel = "Patron"
 	// LogLevelNone disables message logging
 	LogLevelNone MessageLogLevel = "None"
 )
+
+var (
+	// loginMessageCodes are the Login (93) / Login Response (94) messages
+	loginMessageCodes = map[string]bool{"93": true, "94": true}
+	// heartbeatMessageCodes are the SC Status (99) / ACS Status (98) client heartbeat messages
+	heartbeatMessageCodes = map[string]bool{"98": true, "99": true}
+)
+
+// IsQuietMessage reports whether routine (Info/Debug) logging for a message should be
+// suppressed. Client heartbeats (98/99) are only logged at the Debugging level.
+func IsQuietMessage(messageCode string, logLevel string) bool {
+	return heartbeatMessageCodes[messageCode] && MessageLogLevel(logLevel) != LogLevelDebugging
+}
+
+// ScopedLogger returns logger unchanged, or a copy that drops Info/Debug entries when
+// IsQuietMessage is true. Warn and Error entries always pass so failures stay visible.
+func ScopedLogger(logger *zap.Logger, messageCode string, logLevel string) *zap.Logger {
+	if IsQuietMessage(messageCode, logLevel) {
+		return logger.WithOptions(zap.IncreaseLevel(zapcore.WarnLevel))
+	}
+	return logger
+}
 
 // ShouldLogMessage determines if a SIP2 message should be logged based on the tenant's log level
 func ShouldLogMessage(messageCode string, logLevel string) bool {
@@ -29,8 +54,8 @@ func ShouldLogMessage(messageCode string, logLevel string) bool {
 	case LogLevelDebugging:
 		return true
 	case LogLevelFull:
-		// Log all messages except 93/94 (login)
-		return messageCode != "93" && messageCode != "94"
+		// Log all messages except 93/94 (login) and 98/99 (client heartbeat)
+		return !loginMessageCodes[messageCode] && !heartbeatMessageCodes[messageCode]
 	case LogLevelPatron:
 		// Only log 63/64 (patron information)
 		return messageCode == "63" || messageCode == "64"

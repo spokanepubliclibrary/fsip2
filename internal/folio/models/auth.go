@@ -8,34 +8,16 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-// LoginResponse represents a login response from FOLIO
+// LoginResponse represents the response from /authn/login-with-expiry and /authn/refresh.
+//
+// The body carries only the two expirations (ISO-8601 UTC). The tokens themselves arrive
+// as folioAccessToken / folioRefreshToken Set-Cookie headers; the auth client copies
+// them into OkapiToken and RefreshToken, which are never read from or written to JSON.
 type LoginResponse struct {
-	OkapiToken   string    `json:"okapiToken"`
-	RefreshToken string    `json:"refreshToken,omitempty"`
-	AccessToken  string    `json:"accessToken,omitempty"`
-	TokenType    string    `json:"tokenType,omitempty"`
-	ExpiresIn    int       `json:"expiresIn,omitempty"`
-	ExpiresAt    time.Time `json:"-"` // Calculated expiration time (not from JSON)
-	User         *User     `json:"user,omitempty"`
-}
-
-// TokenCache represents a cached authentication token
-type TokenCache struct {
-	AccessToken  string
-	RefreshToken string
-	ExpiresAt    time.Time
-	UserID       string
-	Username     string
-}
-
-// IsExpired checks if the token is expired (with buffer)
-func (tc *TokenCache) IsExpired() bool {
-	// Consider expired 90 seconds before actual expiration (buffer)
-	buffer := 90 * time.Second
-	return time.Now().Add(buffer).After(tc.ExpiresAt)
-}
-
-// NeedsRefresh checks if the token needs to be refreshed
-func (tc *TokenCache) NeedsRefresh() bool {
-	return tc.IsExpired()
+	AccessTokenExpiration  time.Time `json:"accessTokenExpiration"`
+	RefreshTokenExpiration time.Time `json:"refreshTokenExpiration"`
+	OkapiToken             string    `json:"-"` // From the folioAccessToken cookie; sent as X-Okapi-Token
+	RefreshToken           string    `json:"-"` // From the folioRefreshToken cookie
+	ExpiresAt              time.Time `json:"-"` // Same as AccessTokenExpiration
+	User                   *User     `json:"user,omitempty"`
 }

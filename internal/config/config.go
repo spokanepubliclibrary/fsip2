@@ -22,7 +22,7 @@ type Config struct {
 	Host                string         `yaml:"host,omitempty"` // Bind address (e.g., "127.0.0.1"); empty = all interfaces
 	OkapiURL            string         `yaml:"okapiUrl"`
 	HealthCheckPort     int            `yaml:"healthCheckPort"`
-	TokenCacheCapacity  int            `yaml:"tokenCacheCapacity"`
+	TokenCacheCapacity  int            `yaml:"tokenCacheCapacity"` // Deprecated: ignored; tokens are held per SIP connection
 	ScanPeriod          int            `yaml:"scanPeriod"` // milliseconds
 	LogLevel            string         `yaml:"logLevel"`
 	TenantConfigSources []ConfigSource `yaml:"tenantConfigSources"`
@@ -193,9 +193,6 @@ func Load(configFile string) (*Config, error) {
 	if cfg.HealthCheckPort == 0 {
 		cfg.HealthCheckPort = 8081
 	}
-	if cfg.TokenCacheCapacity == 0 {
-		cfg.TokenCacheCapacity = 100
-	}
 	if cfg.ScanPeriod == 0 {
 		cfg.ScanPeriod = 300000 // 5 minutes
 	}
@@ -250,6 +247,16 @@ func (c *Config) loadTenantConfigs() error {
 	return nil
 }
 
+// DeprecationWarnings returns one message per deprecated setting present in the configuration.
+// Load runs before the logger exists, so the caller logs these once logging is initialised.
+func (c *Config) DeprecationWarnings() []string {
+	var warnings []string
+	if c.TokenCacheCapacity != 0 {
+		warnings = append(warnings, "tokenCacheCapacity is deprecated and ignored (tokens are held per SIP connection)")
+	}
+	return warnings
+}
+
 // Validate validates the bootstrap configuration
 // Returns error if the configuration is invalid
 func (c *Config) Validate() error {
@@ -271,11 +278,6 @@ func (c *Config) Validate() error {
 	// Validate OkapiURL is a valid URL
 	if _, err := url.Parse(c.OkapiURL); err != nil {
 		return fmt.Errorf("invalid OkapiURL: %w", err)
-	}
-
-	// Validate TokenCacheCapacity is positive
-	if c.TokenCacheCapacity < 1 {
-		return fmt.Errorf("token cache capacity must be positive (got %d)", c.TokenCacheCapacity)
 	}
 
 	// Validate ScanPeriod is non-negative

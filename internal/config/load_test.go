@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -60,8 +61,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.HealthCheckPort != 8081 {
 		t.Errorf("expected default healthCheckPort 8081, got %d", cfg.HealthCheckPort)
 	}
-	if cfg.TokenCacheCapacity != 100 {
-		t.Errorf("expected default tokenCacheCapacity 100, got %d", cfg.TokenCacheCapacity)
+	if cfg.TokenCacheCapacity != 0 {
+		t.Errorf("deprecated tokenCacheCapacity should have no default, got %d", cfg.TokenCacheCapacity)
 	}
 	if cfg.ScanPeriod != 300000 {
 		t.Errorf("expected default scanPeriod 300000, got %d", cfg.ScanPeriod)
@@ -502,5 +503,31 @@ func TestValidatePatronCustomFields_DefaultMaxLength(t *testing.T) {
 	}
 	if tc.PatronCustomFields.Fields[0].MaxLength != 60 {
 		t.Errorf("expected default MaxLength 60, got %d", tc.PatronCustomFields.Fields[0].MaxLength)
+	}
+}
+
+func TestLoad_DeprecatedTokenCacheCapacity_Warns(t *testing.T) {
+	f := writeTempMainConfig(t, "okapiUrl: http://okapi.example.com\ntokenCacheCapacity: 100\n")
+	cfg, err := Load(f)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() failed for a config with the deprecated key: %v", err)
+	}
+	warnings := cfg.DeprecationWarnings()
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "tokenCacheCapacity is deprecated and ignored") {
+		t.Errorf("DeprecationWarnings() = %v, want one tokenCacheCapacity warning", warnings)
+	}
+}
+
+func TestLoad_WithoutDeprecatedKeys_NoWarnings(t *testing.T) {
+	f := writeTempMainConfig(t, "okapiUrl: http://okapi.example.com\n")
+	cfg, err := Load(f)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if warnings := cfg.DeprecationWarnings(); len(warnings) != 0 {
+		t.Errorf("DeprecationWarnings() = %v, want none", warnings)
 	}
 }

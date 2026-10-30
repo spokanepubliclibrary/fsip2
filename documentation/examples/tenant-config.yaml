@@ -48,21 +48,21 @@ tenants:
     fieldDelimiter: "|"
 
     # Character encoding: IBM850, ISO-8859-1, UTF-8, etc.
-    charset: IBM850
+    charset: UTF-8
 
     # Timezone for date/time formatting
     timezone: America/New_York
 
     # Log level for SIP2 messages
     # Options: Debugging, Full, Patron, None
-    # - Debugging: All messages logged with no obfuscation
-    # - Full: All messages except 93/94 (login), PINs obfuscated
+    # - Debugging: All messages (including 98/99 client heartbeat) logged with no obfuscation
+    # - Full: All messages except 93/94 (login) and 98/99 (client heartbeat), PINs obfuscated
     # - Patron: Only 63/64 (patron info) messages, PINs obfuscated
     # - None: No message logging (default)
     logLevel: Full
 
-    # FOLIO Okapi connection
-    okapiUrl: https://okapi-diku.example.com
+    # FOLIO Okapi/Eureka connection
+    okapiUrl: https://okapi-diku.example.com # Okapi URL, or the Kong gateway URL on Eureka
     okapiTenant: diku
 
     # (scTenants is now a top-level key — see below)
@@ -198,6 +198,9 @@ tenants:
         enabled: true
 
     # FOLIO-specific settings
+    # Eureka: patron verification must use the PIN. Password mode (usePinForPatronVerification: false)
+    # fails on Eureka. usePinForPatronVerification has no default: omitting it while verification is
+    # required selects password mode, so always set it explicitly.
     patronPasswordVerificationRequired: false # If true, patron PIN (or password) is verified against FOLIO user record
     usePinForPatronVerification: true # If true, use the PIN for verification; if false, use password field
     invalidCheckinStatuses: "Withdrawn,Lost and paid"
@@ -248,9 +251,9 @@ tenants:
 
     # Rolling renewal settings (for message 23 or 63 - Patron Status and Patron Information)
     # Automatically extends patron expiration dates when they authenticate
-    # If enabled, the SIP account used on this service will require the following FOLIO permissions:
-    # - users.item.put (to update user records)
-    # - users.item.get (to fetch user records)
+    # If enabled, the SIP account used on this service also needs (in addition to the required permissions):
+    # - Okapi: users.item.put (to update user records) and users.item.get (to fetch user records)
+    # - Eureka: the role `SIP2 Rolling Renewal` (users_item.edit, users_item.view), assigned in addition to `SIP2 Service`
     # Caution: if `extendExpired` is set to `true` reactivation of intentionally deactivated accounts is possible.
     # - Make sure to configure `selectPatrons` and `allowedPatrons` to limit which patron groups are affected and
     # - move intentionally deactivated accounts to a different patron group.
@@ -349,12 +352,12 @@ tenants:
     errorDetectionEnabled: true
     messageDelimiter: "\r"
     fieldDelimiter: "|"
-    charset: IBM850
+    charset: UTF-8
     timezone: America/New_York
     logLevel: Patron
 
     # FOLIO Okapi connection
-    okapiUrl: https://okapi-diku.example.com
+    okapiUrl: https://okapi-diku.example.com # Okapi URL, or the Kong gateway URL on Eureka
     okapiTenant: diku
 
     # (scTenants is now a top-level key — see below)
@@ -435,6 +438,9 @@ tenants:
         enabled: true
 
     # FOLIO-specific settings
+    # Eureka: patron verification must use the PIN. Password mode (usePinForPatronVerification: false)
+    # fails on Eureka. usePinForPatronVerification has no default: omitting it while verification is
+    # required selects password mode, so always set it explicitly.
     patronPasswordVerificationRequired: false # If true, patron PIN (or password) is verified against FOLIO user record
     usePinForPatronVerification: true # If true, use the PIN for verification; if false, use password field
     invalidCheckinStatuses: "Withdrawn,Lost and paid"

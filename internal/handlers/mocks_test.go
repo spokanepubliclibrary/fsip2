@@ -108,28 +108,12 @@ func (m *MockCirculationClient) RenewByID(ctx context.Context, token string, req
 	return args.Get(0).(*models.Loan), args.Error(1)
 }
 
-func (m *MockCirculationClient) GetLoansByUser(ctx context.Context, token, userID string) (*models.LoanCollection, error) {
-	args := m.Called(ctx, token, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.LoanCollection), args.Error(1)
-}
-
 func (m *MockCirculationClient) GetOpenLoansByUser(ctx context.Context, token, userID string, limit int) (*models.LoanCollection, error) {
 	args := m.Called(ctx, token, userID, limit)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*models.LoanCollection), args.Error(1)
-}
-
-func (m *MockCirculationClient) GetOpenRequestsByUser(ctx context.Context, token, userID string) (*models.RequestCollection, error) {
-	args := m.Called(ctx, token, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*models.RequestCollection), args.Error(1)
 }
 
 func (m *MockCirculationClient) GetAvailableHolds(ctx context.Context, token, userID string, limit int) (*models.RequestCollection, error) {

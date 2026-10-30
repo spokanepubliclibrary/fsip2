@@ -1,0 +1,6 @@
+{
+  "id": "test-sp-uuid",
+  "name": "Main Circulation Desk",
+  "code": "MAIN-CIRC",
+  "pickupLocation": true
+}

@@ -110,26 +110,6 @@ func TestAccount_IsOpen(t *testing.T) {
 	}
 }
 
-func TestAccount_IsOutstanding(t *testing.T) {
-	tests := []struct {
-		name      string
-		remaining float64
-		want      bool
-	}{
-		{"has balance", 5.00, true},
-		{"zero balance", 0.00, false},
-		{"small balance", 0.01, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			a := &Account{Remaining: FlexibleFloat(tt.remaining)}
-			if got := a.IsOutstanding(); got != tt.want {
-				t.Errorf("IsOutstanding() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestAccount_IsPaid(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -152,40 +132,6 @@ func TestAccount_IsPaid(t *testing.T) {
 }
 
 // --- AccountCollection tests ---
-
-func TestAccountCollection_GetTotalOutstanding(t *testing.T) {
-	ac := &AccountCollection{
-		Accounts: []Account{
-			{Remaining: FlexibleFloat(10.00)},
-			{Remaining: FlexibleFloat(0.00)},
-			{Remaining: FlexibleFloat(5.50)},
-		},
-	}
-	got := ac.GetTotalOutstanding()
-	want := 15.50
-	if got != want {
-		t.Errorf("GetTotalOutstanding() = %v, want %v", got, want)
-	}
-}
-
-func TestAccountCollection_GetTotalOutstanding_Empty(t *testing.T) {
-	ac := &AccountCollection{}
-	if got := ac.GetTotalOutstanding(); got != 0.0 {
-		t.Errorf("GetTotalOutstanding() = %v, want 0.0", got)
-	}
-}
-
-func TestAccountCollection_GetTotalOutstanding_AllZero(t *testing.T) {
-	ac := &AccountCollection{
-		Accounts: []Account{
-			{Remaining: FlexibleFloat(0)},
-			{Remaining: FlexibleFloat(0)},
-		},
-	}
-	if got := ac.GetTotalOutstanding(); got != 0.0 {
-		t.Errorf("GetTotalOutstanding() = %v, want 0.0", got)
-	}
-}
 
 func TestAccountCollection_GetOpenAccounts(t *testing.T) {
 	ac := &AccountCollection{

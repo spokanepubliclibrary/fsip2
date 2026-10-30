@@ -92,31 +92,15 @@ func (cc *CirculationClient) RenewByID(ctx context.Context, token string, req Re
 	return &loan, nil
 }
 
-// RenewAll renews all loans for a patron
+// PLACEHOLDER – NOT FOR USE. RenewAll is a wireframe for a future FOLIO
+// renew-all endpoint and always returns ErrNotImplemented without calling FOLIO.
+//   - NOT FUNCTIONAL: the endpoint it was written against
+//     (POST /circulation/renew-by-barcode-all) does not exist in Trillium
+//     (mod-circulation v24.5.2).
+//   - NOT IN ANY ROLE.
+//   - Live SIP 65 Renew All renews each loan with RenewByID (renew_all.go).
 func (cc *CirculationClient) RenewAll(ctx context.Context, token string, userBarcode string) (*models.LoanCollection, error) {
-	path := fmt.Sprintf("/circulation/renew-by-barcode-all?userBarcode=%s", url.QueryEscape(userBarcode))
-
-	var result models.LoanCollection
-	err := cc.client.Post(ctx, path, token, nil, &result)
-	if err != nil {
-		return nil, fmt.Errorf("renew all failed: %w", err)
-	}
-
-	return &result, nil
-}
-
-// GetLoansByUser retrieves all loans for a user
-func (cc *CirculationClient) GetLoansByUser(ctx context.Context, token string, userID string) (*models.LoanCollection, error) {
-	query := fmt.Sprintf("userId==%s", userID)
-	path := fmt.Sprintf("/circulation/loans?query=%s", url.QueryEscape(query))
-
-	var loans models.LoanCollection
-	err := cc.client.Get(ctx, path, token, &loans)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get loans: %w", err)
-	}
-
-	return &loans, nil
+	return nil, ErrNotImplemented
 }
 
 // GetOpenLoansByUser retrieves open loans for a user
@@ -131,47 +115,6 @@ func (cc *CirculationClient) GetOpenLoansByUser(ctx context.Context, token strin
 	}
 
 	return &loans, nil
-}
-
-// GetLoanByID retrieves a loan by ID
-func (cc *CirculationClient) GetLoanByID(ctx context.Context, token string, loanID string) (*models.Loan, error) {
-	path := fmt.Sprintf("/circulation/loans/%s", loanID)
-
-	var loan models.Loan
-	err := cc.client.Get(ctx, path, token, &loan)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get loan: %w", err)
-	}
-
-	return &loan, nil
-}
-
-// GetRequestsByUser retrieves requests for a user
-func (cc *CirculationClient) GetRequestsByUser(ctx context.Context, token string, userID string) (*models.RequestCollection, error) {
-	query := fmt.Sprintf("requesterId==%s", userID)
-	path := fmt.Sprintf("/circulation/requests?query=%s", url.QueryEscape(query))
-
-	var requests models.RequestCollection
-	err := cc.client.Get(ctx, path, token, &requests)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get requests: %w", err)
-	}
-
-	return &requests, nil
-}
-
-// GetOpenRequestsByUser retrieves open requests (holds) for a user
-func (cc *CirculationClient) GetOpenRequestsByUser(ctx context.Context, token string, userID string) (*models.RequestCollection, error) {
-	query := fmt.Sprintf("requesterId==%s and status=Open*", userID)
-	path := fmt.Sprintf("/circulation/requests?query=%s", url.QueryEscape(query))
-
-	var requests models.RequestCollection
-	err := cc.client.Get(ctx, path, token, &requests)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get open requests: %w", err)
-	}
-
-	return &requests, nil
 }
 
 // GetAvailableHolds retrieves requests that are ready for pickup for a user.
@@ -237,30 +180,32 @@ func (cc *CirculationClient) GetRequestsByItem(ctx context.Context, token string
 	return &requests, nil
 }
 
-// CreateRequest creates a new request (hold)
+// PLACEHOLDER – NOT FOR USE. CreateRequest is reserved for a future SIP 15
+// Hold "+" (create) and always returns ErrNotImplemented without calling FOLIO.
+//   - NOT FUNCTIONAL: SIP 15 is not implemented.
+//   - NOT IN ANY ROLE. Future capability: circulation.requests.item.post ->
+//     circulation_requests_item.create.
+//   - FOLIO requires requesterId, requestType, requestDate and
+//     fulfillmentPreference; in practice also item/instance ids, requestLevel
+//     and pickupServicePointId. Item vs title level, request type and pickup
+//     service point are open design points (plan 02, B3).
+//   - Build together with CancelRequest and SIP 15 "*" (change) as one feature.
 func (cc *CirculationClient) CreateRequest(ctx context.Context, token string, request *models.Request) (*models.Request, error) {
-	var result models.Request
-	err := cc.client.Post(ctx, "/circulation/requests", token, request, &result)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	return &result, nil
+	return nil, ErrNotImplemented
 }
 
-// CancelRequest cancels a request
+// PLACEHOLDER – NOT FOR USE. CancelRequest is reserved for future request
+// cancel / SIP 15 Hold "-" and always returns ErrNotImplemented without calling FOLIO.
+//   - NOT FUNCTIONAL: the cancel sub-resource it was written against
+//     (POST /circulation/requests/{id}/cancel) does not exist in Trillium.
+//   - NOT IN ANY ROLE. Future capabilities: circulation.requests.item.get ->
+//     circulation_requests_item.view, circulation.requests.item.put ->
+//     circulation_requests_item.edit.
+//   - Future spec: GET /circulation/requests/{id}; on the raw map (preserving
+//     every other field) set status "Closed - Cancelled", cancellationReasonId
+//     from a new tenant config option (proposed requestCancellationReasonId),
+//     and cancelledByUserId = the kiosk user's UUID (via GetUserByUsername);
+//     then PUT /circulation/requests/{id}. Replace this signature when built.
 func (cc *CirculationClient) CancelRequest(ctx context.Context, token string, requestID string, cancellationReasonID string, additionalInfo string) error {
-	path := fmt.Sprintf("/circulation/requests/%s/cancel", requestID)
-
-	cancelData := map[string]string{
-		"cancellationReasonId":              cancellationReasonID,
-		"cancellationAdditionalInformation": additionalInfo,
-	}
-
-	err := cc.client.Post(ctx, path, token, cancelData, nil)
-	if err != nil {
-		return fmt.Errorf("failed to cancel request: %w", err)
-	}
-
-	return nil
+	return ErrNotImplemented
 }

@@ -119,53 +119,42 @@ func (ic *InventoryClient) GetServicePointByID(ctx context.Context, token string
 	return &servicePoint, nil
 }
 
-// UpdateItemStatus updates the status of an item
+// PLACEHOLDER – NOT FOR USE. UpdateItemStatus is reserved for future SIP 19
+// Item Status Update and always returns ErrNotImplemented without calling FOLIO.
+//   - NOT FUNCTIONAL: a typed full PUT of the item would erase fields not in
+//     models.Item. The future build must use POST
+//     /inventory/items/{id}/mark-<status> (missing, withdrawn, in-process,
+//     in-process-non-requestable, intellectual-item, long-missing, restricted,
+//     unavailable, unknown), never the full item PUT.
+//   - NOT IN ANY ROLE. Each status needs inventory.items.item.mark-<status>.post
+//     (capability inventory_items_item_mark-<status>.execute); the role is
+//     decided when SIP 19 is built.
+//   - Open design points: mapping SIP 19 CH to a status, which statuses a kiosk
+//     may set. The SIP 19 handler's current ok=1 response is unchanged.
 func (ic *InventoryClient) UpdateItemStatus(ctx context.Context, token string, itemID string, status string) error {
-	// Get the current item
-	item, err := ic.GetItemByID(ctx, token, itemID)
-	if err != nil {
-		return err
-	}
-
-	// Update the status
-	item.Status.Name = status
-
-	// Send update
-	path := fmt.Sprintf("/inventory/items/%s", itemID)
-	err = ic.client.Put(ctx, path, token, item, nil)
-	if err != nil {
-		return fmt.Errorf("failed to update item status: %w", err)
-	}
-
-	return nil
+	return ErrNotImplemented
 }
 
-// SearchInstances searches for instances
+// PLACEHOLDER – NOT FOR USE. SearchInstances is reserved for future SIP 15
+// title-level holds and always returns ErrNotImplemented without calling FOLIO.
+//   - NOT IN ANY ROLE as a caller (search.instances.collection.get is already
+//     in Role A).
+//   - When built: GET /search/instances, build CQL values with cqlQuote (plan 04) and
+//     pass a limit (mod-search's default page size is unverified).
 func (ic *InventoryClient) SearchInstances(ctx context.Context, token string, query string) ([]models.Instance, error) {
-	path := fmt.Sprintf("/search/instances?query=%s", url.QueryEscape(query))
-
-	// Search endpoint returns different structure
-	var result struct {
-		Instances    []models.Instance `json:"instances"`
-		TotalRecords int               `json:"totalRecords"`
-	}
-
-	err := ic.client.Get(ctx, path, token, &result)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search instances: %w", err)
-	}
-
-	return result.Instances, nil
+	return nil, ErrNotImplemented
 }
 
-// SearchInstancesByTitle searches for instances by title
+// PLACEHOLDER – NOT FOR USE. SearchInstancesByTitle is reserved for future
+// SIP 15 title-level holds and always returns ErrNotImplemented without calling FOLIO.
+//   - NOT IN ANY ROLE. When built: quote the title with cqlQuote (plan 04) and pass a limit.
 func (ic *InventoryClient) SearchInstancesByTitle(ctx context.Context, token string, title string) ([]models.Instance, error) {
-	query := fmt.Sprintf("title all \"%s\"", title)
-	return ic.SearchInstances(ctx, token, query)
+	return nil, ErrNotImplemented
 }
 
-// SearchInstancesByISBN searches for instances by ISBN
+// PLACEHOLDER – NOT FOR USE. SearchInstancesByISBN is reserved for future
+// SIP 15 title-level holds and always returns ErrNotImplemented without calling FOLIO.
+//   - NOT IN ANY ROLE. When built: quote the ISBN with cqlQuote (plan 04) and pass a limit.
 func (ic *InventoryClient) SearchInstancesByISBN(ctx context.Context, token string, isbn string) ([]models.Instance, error) {
-	query := fmt.Sprintf("isbn=\"%s\"", isbn)
-	return ic.SearchInstances(ctx, token, query)
+	return nil, ErrNotImplemented
 }

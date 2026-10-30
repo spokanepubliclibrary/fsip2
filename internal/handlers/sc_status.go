@@ -30,16 +30,21 @@ func NewSCStatusHandler(logger *zap.Logger, tenantConfig *config.TenantConfig) *
 
 // Handle processes an SC Status request (99) and returns an ACS Status response (98)
 func (h *SCStatusHandler) Handle(ctx context.Context, msg *parser.Message, session *types.Session) (string, error) {
-	h.logRequest(msg, session)
-
-	h.logger.Info("SC Status request",
-		zap.String("session_id", session.ID),
-	)
+	// Client heartbeats (99/98) are only logged when the tenant log level is Debugging
+	quiet := logging.IsQuietMessage(string(msg.Code), session.TenantConfig.LogLevel)
+	if !quiet {
+		h.logRequest(msg, session)
+		h.logger.Info("SC Status request",
+			zap.String("session_id", session.ID),
+		)
+	}
 
 	// Build ACS Status Response
 	response := h.buildACSStatusResponse(session, msg.SequenceNumber)
 
-	h.logResponse("ACS Status Response", session, nil)
+	if !quiet {
+		h.logResponse("ACS Status Response", session, nil)
+	}
 
 	return response, nil
 }

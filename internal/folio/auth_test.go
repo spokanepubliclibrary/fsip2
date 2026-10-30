@@ -3,440 +3,248 @@ package folio
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 )
 
+const (
+	testAccessExp  = "2026-10-23T22:35:43Z"
+	testRefreshExp = "2026-10-24T22:25:43Z"
+)
+
+// writeTokenResponse writes a login-with-expiry style response: tokens as cookies,
+// expirations in the body. An empty token value omits that cookie.
+func writeTokenResponse(w http.ResponseWriter, access, refresh, body string) {
+	if access != "" {
+		http.SetCookie(w, &http.Cookie{Name: AccessTokenCookie, Value: access, Path: "/"})
+	}
+	if refresh != "" {
+		http.SetCookie(w, &http.Cookie{Name: RefreshTokenCookie, Value: refresh, Path: "/authn"})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(body))
+}
+
+func validExpiryBody() string {
+	return `{"accessTokenExpiration":"` + testAccessExp + `","refreshTokenExpiration":"` + testRefreshExp + `"}`
+}
+
 func TestLogin_Success(t *testing.T) {
-	// Create mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/authn/login" {
+		if r.URL.Path != "/authn/login-with-expiry" {
 			t.Errorf("Unexpected path: %s", r.URL.Path)
 		}
 		if r.Method != http.MethodPost {
 			t.Errorf("Unexpected method: %s", r.Method)
 		}
+		if r.Header.Get("X-Okapi-Token") != "" {
+			t.Error("Login must not send X-Okapi-Token")
+		}
 
-		// Verify request body
 		var loginReq models.LoginRequest
 		json.NewDecoder(r.Body).Decode(&loginReq)
 		if loginReq.Username != "testuser" || loginReq.Password != "testpass" {
 			t.Error("Invalid login credentials")
 		}
 
-		// Return successful login response
-		response := models.LoginResponse{
-			OkapiToken:   "test-token-123",
-			AccessToken:  "test-token-123",
-			RefreshToken: "refresh-token-456",
-			ExpiresIn:    600,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		writeTokenResponse(w, "access-123", "refresh-456", validExpiryBody())
 	}))
 	defer server.Close()
 
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	resp, err := client.Login(ctx, "testuser", "testpass")
+	client := NewAuthClient(server.URL, "test-tenant")
+	resp, err := client.Login(context.Background(), "testuser", "testpass")
 	if err != nil {
 		t.Fatalf("Login failed: %v", err)
 	}
 
-	if resp.OkapiToken != "test-token-123" {
-		t.Errorf("Expected token test-token-123, got %s", resp.OkapiToken)
+	if resp.OkapiToken != "access-123" {
+		t.Errorf("OkapiToken = %q, want access-123", resp.OkapiToken)
+	}
+	if resp.RefreshToken != "refresh-456" {
+		t.Errorf("RefreshToken = %q, want refresh-456", resp.RefreshToken)
+	}
+	wantAccess, _ := time.Parse(time.RFC3339, testAccessExp)
+	wantRefresh, _ := time.Parse(time.RFC3339, testRefreshExp)
+	if !resp.ExpiresAt.Equal(wantAccess) {
+		t.Errorf("ExpiresAt = %v, want server-provided %v", resp.ExpiresAt, wantAccess)
+	}
+	if !resp.RefreshTokenExpiration.Equal(wantRefresh) {
+		t.Errorf("RefreshTokenExpiration = %v, want %v", resp.RefreshTokenExpiration, wantRefresh)
+	}
+}
+
+func TestLogin_MissingCookie(t *testing.T) {
+	tests := []struct {
+		name          string
+		access        string
+		refresh       string
+		wantErrSubstr string
+	}{
+		{"no access cookie", "", "refresh-456", AccessTokenCookie},
+		{"no refresh cookie", "access-123", "", RefreshTokenCookie},
+		{"no cookies", "", "", AccessTokenCookie},
 	}
 
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				writeTokenResponse(w, tt.access, tt.refresh, validExpiryBody())
+			}))
+			defer server.Close()
+
+			client := NewAuthClient(server.URL, "test-tenant")
+			_, err := client.Login(context.Background(), "testuser", "testpass")
+			if err == nil {
+				t.Fatal("Expected error for missing cookie")
+			}
+			if !strings.Contains(err.Error(), tt.wantErrSubstr) {
+				t.Errorf("error %q should name %s", err, tt.wantErrSubstr)
+			}
+		})
+	}
+}
+
+func TestLogin_ExpirationProblems(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"unparseable expiration", `{"accessTokenExpiration":"soon","refreshTokenExpiration":"` + testRefreshExp + `"}`},
+		{"missing access expiration", `{"refreshTokenExpiration":"` + testRefreshExp + `"}`},
+		{"empty body", ``},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				writeTokenResponse(w, "access-123", "refresh-456", tt.body)
+			}))
+			defer server.Close()
+
+			client := NewAuthClient(server.URL, "test-tenant")
+			if _, err := client.Login(context.Background(), "testuser", "testpass"); err == nil {
+				t.Error("Expected error, got nil")
+			}
+		})
+	}
+}
+
+func TestLogin_HTTPErrors(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusUnprocessableEntity} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid credentials"})
+		}))
+
+		client := NewAuthClient(server.URL, "test-tenant")
+		_, err := client.Login(context.Background(), "wronguser", "wrongpass")
+		server.Close()
+
+		var httpErr *HTTPError
+		if !errors.As(err, &httpErr) || httpErr.StatusCode != status {
+			t.Errorf("status %d: expected wrapped HTTPError, got %v", status, err)
+		}
+	}
+}
+
+func TestRefresh_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/authn/refresh" {
+			t.Errorf("Unexpected path: %s", r.URL.Path)
+		}
+		if r.Header.Get("X-Okapi-Token") != "" {
+			t.Error("Refresh must not send X-Okapi-Token")
+		}
+		if r.ContentLength > 0 {
+			t.Errorf("Refresh must send no body, got %d bytes", r.ContentLength)
+		}
+		cookie, err := r.Cookie(RefreshTokenCookie)
+		if err != nil || cookie.Value != "old-refresh" {
+			t.Errorf("Expected %s cookie old-refresh, got %v (%v)", RefreshTokenCookie, cookie, err)
+		}
+		writeTokenResponse(w, "new-access", "new-refresh", validExpiryBody())
+	}))
+	defer server.Close()
+
+	client := NewAuthClient(server.URL, "test-tenant")
+	resp, err := client.Refresh(context.Background(), "old-refresh")
+	if err != nil {
+		t.Fatalf("Refresh failed: %v", err)
+	}
+	if resp.OkapiToken != "new-access" || resp.RefreshToken != "new-refresh" {
+		t.Errorf("tokens = (%q, %q), want (new-access, new-refresh)", resp.OkapiToken, resp.RefreshToken)
+	}
 	if resp.ExpiresAt.IsZero() {
 		t.Error("ExpiresAt should be set")
 	}
 }
 
-func TestLogin_InvalidCredentials(t *testing.T) {
-	// Create mock server that returns 401
+func TestRefresh_EmptyToken_NoHTTPCall(t *testing.T) {
+	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid credentials"})
+		atomic.AddInt32(&calls, 1)
 	}))
 	defer server.Close()
 
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	_, err := client.Login(ctx, "wronguser", "wrongpass")
-	if err == nil {
-		t.Error("Expected error for invalid credentials")
+	client := NewAuthClient(server.URL, "test-tenant")
+	_, err := client.Refresh(context.Background(), "")
+	if !errors.Is(err, ErrNoRefreshToken) {
+		t.Errorf("err = %v, want ErrNoRefreshToken", err)
+	}
+	if atomic.LoadInt32(&calls) != 0 {
+		t.Errorf("Expected no HTTP call, got %d", calls)
 	}
 }
 
-func TestLogin_NoToken(t *testing.T) {
-	// Create mock server that returns response without token
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{})
-	}))
-	defer server.Close()
-
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	_, err := client.Login(ctx, "testuser", "testpass")
-	if err == nil {
-		t.Error("Expected error when no token received")
-	}
-
-	if !strings.Contains(err.Error(), "no token received") {
-		t.Errorf("Expected 'no token received' error, got: %v", err)
-	}
-}
-
-func TestLogin_UsesCachedToken(t *testing.T) {
-	loginCount := 0
-
-	// Create mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		loginCount++
-		response := models.LoginResponse{
-			OkapiToken:   "cached-token",
-			AccessToken:  "cached-token",
-			RefreshToken: "refresh-token",
-			ExpiresIn:    600,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	// First login - should hit server
-	_, err := client.Login(ctx, "testuser", "testpass")
-	if err != nil {
-		t.Fatalf("First login failed: %v", err)
-	}
-
-	if loginCount != 1 {
-		t.Errorf("Expected 1 login request, got %d", loginCount)
-	}
-
-	// Second login - should use cache
-	resp2, err := client.Login(ctx, "testuser", "testpass")
-	if err != nil {
-		t.Fatalf("Second login failed: %v", err)
-	}
-
-	if loginCount != 1 {
-		t.Errorf("Expected still 1 login request (cached), got %d", loginCount)
-	}
-
-	if resp2.OkapiToken != "cached-token" {
-		t.Errorf("Expected cached token, got %s", resp2.OkapiToken)
-	}
-}
-
-func TestValidateToken_Valid(t *testing.T) {
-	// Create mock server that returns user info
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/users/_self" {
-			t.Errorf("Unexpected path: %s", r.URL.Path)
-		}
-
-		user := models.User{
-			ID:       "user-123",
-			Username: "testuser",
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(user)
-	}))
-	defer server.Close()
-
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	valid, err := client.ValidateToken(ctx, "valid-token")
-	if err != nil {
-		t.Fatalf("ValidateToken failed: %v", err)
-	}
-
-	if !valid {
-		t.Error("Expected token to be valid")
-	}
-}
-
-func TestValidateToken_Invalid(t *testing.T) {
-	// Create mock server that returns 401
+func TestRefresh_Unauthorized(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid token"})
 	}))
 	defer server.Close()
 
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
+	client := NewAuthClient(server.URL, "test-tenant")
+	_, err := client.Refresh(context.Background(), "stale-refresh")
 
-	valid, err := client.ValidateToken(ctx, "invalid-token")
-	if err != nil {
-		t.Fatalf("ValidateToken should not error: %v", err)
-	}
-
-	if valid {
-		t.Error("Expected token to be invalid")
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || !httpErr.IsUnauthorized() {
+		t.Errorf("expected wrapped 401 HTTPError, got %v", err)
 	}
 }
 
-func TestGetCachedToken(t *testing.T) {
-	// Create mock server
+func TestRefresh_MissingCookie(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := models.LoginResponse{
-			OkapiToken:   "test-token",
-			AccessToken:  "test-token",
-			RefreshToken: "refresh-token",
-			ExpiresIn:    600,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		writeTokenResponse(w, "new-access", "", validExpiryBody())
 	}))
 	defer server.Close()
 
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	// Login to cache token
-	_, err := client.Login(ctx, "testuser", "testpass")
-	if err != nil {
-		t.Fatalf("Login failed: %v", err)
-	}
-
-	// Get cached token
-	cached, found := client.GetCachedToken("testuser")
-	if !found {
-		t.Fatal("Expected to find cached token")
-	}
-
-	if cached.AccessToken != "test-token" {
-		t.Errorf("Expected cached token test-token, got %s", cached.AccessToken)
+	client := NewAuthClient(server.URL, "test-tenant")
+	_, err := client.Refresh(context.Background(), "old-refresh")
+	if err == nil || !strings.Contains(err.Error(), RefreshTokenCookie) {
+		t.Errorf("expected error naming %s, got %v", RefreshTokenCookie, err)
 	}
 }
 
-func TestInvalidateToken(t *testing.T) {
-	// Create mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := models.LoginResponse{
-			OkapiToken:  "test-token",
-			AccessToken: "test-token",
-			ExpiresIn:   600,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	// Login to cache token
-	_, err := client.Login(ctx, "testuser", "testpass")
+func TestExtractTokens_FirstNonEmptyWins(t *testing.T) {
+	cookies := []*http.Cookie{
+		{Name: "other", Value: "x"},
+		{Name: AccessTokenCookie, Value: "a1"},
+		{Name: AccessTokenCookie, Value: "a2"},
+		{Name: RefreshTokenCookie, Value: "r1"},
+	}
+	access, refresh, err := extractTokens(cookies)
 	if err != nil {
-		t.Fatalf("Login failed: %v", err)
+		t.Fatalf("extractTokens() error = %v", err)
 	}
-
-	// Verify token is cached
-	_, found := client.GetCachedToken("testuser")
-	if !found {
-		t.Fatal("Expected to find cached token")
-	}
-
-	// Invalidate token
-	client.InvalidateToken("testuser")
-
-	// Verify token is no longer cached
-	_, found = client.GetCachedToken("testuser")
-	if found {
-		t.Error("Expected token to be invalidated")
-	}
-}
-
-func TestClearCache(t *testing.T) {
-	// Create mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := models.LoginResponse{
-			OkapiToken:  "test-token",
-			AccessToken: "test-token",
-			ExpiresIn:   600,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	// Login multiple users
-	client.Login(ctx, "user1", "pass1")
-	client.Login(ctx, "user2", "pass2")
-
-	// Clear cache
-	client.ClearCache()
-
-	// Verify all tokens are cleared
-	_, found1 := client.GetCachedToken("user1")
-	_, found2 := client.GetCachedToken("user2")
-
-	if found1 || found2 {
-		t.Error("Expected all tokens to be cleared")
-	}
-}
-
-func TestLoginAndCache(t *testing.T) {
-	// Create mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := models.LoginResponse{
-			OkapiToken:  "test-token",
-			AccessToken: "test-token",
-			ExpiresIn:   600,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	token, err := client.LoginAndCache(ctx, "testuser", "testpass")
-	if err != nil {
-		t.Fatalf("LoginAndCache failed: %v", err)
-	}
-
-	if token != "test-token" {
-		t.Errorf("Expected token test-token, got %s", token)
-	}
-
-	// Verify token is cached
-	_, found := client.GetCachedToken("testuser")
-	if !found {
-		t.Error("Expected token to be cached")
-	}
-}
-
-func TestGetOrRefreshToken_UsesCached(t *testing.T) {
-	loginCount := 0
-
-	// Create mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		loginCount++
-		response := models.LoginResponse{
-			OkapiToken:  "test-token",
-			AccessToken: "test-token",
-			ExpiresIn:   600,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	// First call - should login
-	token1, err := client.GetOrRefreshToken(ctx, "testuser", "testpass")
-	if err != nil {
-		t.Fatalf("First GetOrRefreshToken failed: %v", err)
-	}
-
-	// Second call - should use cache
-	token2, err := client.GetOrRefreshToken(ctx, "testuser", "testpass")
-	if err != nil {
-		t.Fatalf("Second GetOrRefreshToken failed: %v", err)
-	}
-
-	if token1 != token2 {
-		t.Error("Expected same token from cache")
-	}
-
-	if loginCount != 1 {
-		t.Errorf("Expected only 1 login call (used cache), got %d", loginCount)
-	}
-}
-
-func TestGetOrRefreshToken_RefreshesExpired(t *testing.T) {
-	loginCount := 0
-
-	// Create mock server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		loginCount++
-		response := models.LoginResponse{
-			OkapiToken:  "refreshed-token",
-			AccessToken: "refreshed-token",
-			ExpiresIn:   1, // 1 second TTL; the 90s NeedsRefresh buffer treats it as already expired
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	// First call - should login
-	_, err := client.GetOrRefreshToken(ctx, "testuser", "testpass")
-	if err != nil {
-		t.Fatalf("First GetOrRefreshToken failed: %v", err)
-	}
-
-	// Wait for token to expire
-	time.Sleep(100 * time.Millisecond)
-
-	// Second call - should refresh (login again)
-	token2, err := client.GetOrRefreshToken(ctx, "testuser", "testpass")
-	if err != nil {
-		t.Fatalf("Second GetOrRefreshToken failed: %v", err)
-	}
-
-	if token2 != "refreshed-token" {
-		t.Errorf("Expected refreshed token, got %s", token2)
-	}
-
-	if loginCount != 2 {
-		t.Errorf("Expected 2 login calls (refreshed expired token), got %d", loginCount)
-	}
-}
-
-func TestLogin_DefaultExpiration(t *testing.T) {
-	// Create mock server that doesn't include expiresIn
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		response := models.LoginResponse{
-			OkapiToken:  "test-token",
-			AccessToken: "test-token",
-			// ExpiresIn not set - should default to 600
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	}))
-	defer server.Close()
-
-	client := NewAuthClient(server.URL, "test-tenant", 100)
-	ctx := context.Background()
-
-	resp, err := client.Login(ctx, "testuser", "testpass")
-	if err != nil {
-		t.Fatalf("Login failed: %v", err)
-	}
-
-	// ExpiresAt should be approximately 10 minutes from now
-	expectedExpiry := time.Now().Add(10 * time.Minute)
-	diff := resp.ExpiresAt.Sub(expectedExpiry).Abs()
-
-	if diff > 5*time.Second {
-		t.Errorf("Expected expiry around %v, got %v (diff: %v)", expectedExpiry, resp.ExpiresAt, diff)
+	if access != "a1" || refresh != "r1" {
+		t.Errorf("got (%q, %q), want (a1, r1)", access, refresh)
 	}
 }

@@ -2,14 +2,38 @@ package folio
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
+	"net/http"
+	"strings"
 
-	"github.com/spokanepubliclibrary/fsip2/internal/cache"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"go.uber.org/zap"
 )
+
+// Cookie names used by /authn/login-with-expiry, /authn/refresh and /authn/logout
+// (mod-login-keycloak on Eureka, mod-login v7.10.0+ / Poppy on Okapi).
+const (
+	AccessTokenCookie  = "folioAccessToken"
+	RefreshTokenCookie = "folioRefreshToken"
+)
+
+// ErrNoRefreshToken is returned when a refresh token is required but empty.
+// No HTTP call is made in that case.
+var ErrNoRefreshToken = errors.New("no refresh token")
+
+// ErrNotImplemented is returned by PLACEHOLDER client methods (roadmap stubs).
+// No HTTP call is made in that case.
+var ErrNotImplemented = errors.New("not implemented: placeholder")
+
+// ErrInvalidRefreshToken is returned by Logout when the refresh token is not JWT-shaped.
+// No HTTP call is made in that case.
+var ErrInvalidRefreshToken = errors.New("refresh token is not JWT-shaped")
+
+// ErrNoAccessToken is returned by Logout when the access token is empty.
+// No HTTP call is made in that case.
+var ErrNoAccessToken = errors.New("no access token")
 
 // Package-level logger for auth operations (can be set via SetAuthLogger)
 var authLogger *zap.Logger
@@ -19,165 +43,185 @@ func SetAuthLogger(logger *zap.Logger) {
 	authLogger = logger
 }
 
-// AuthClient handles authentication with FOLIO
+// AuthClient handles authentication with FOLIO.
+// It holds no token state: tokens are owned per SIP connection by types.Session.
 type AuthClient struct {
-	client     *Client
-	tokenCache *cache.TokenCache
+	client *Client
 }
 
 // NewAuthClient creates a new authentication client
-func NewAuthClient(baseURL, tenant string, tokenCacheCapacity int) *AuthClient {
+func NewAuthClient(baseURL, tenant string) *AuthClient {
 	return &AuthClient{
-		client:     NewClient(baseURL, tenant),
-		tokenCache: cache.NewTokenCache(tokenCacheCapacity),
+		client: NewClient(baseURL, tenant),
 	}
 }
 
-// Login authenticates a user and returns a token
+// Login authenticates a user via /authn/login-with-expiry.
+// The access and refresh tokens come from the response cookies; the expirations from the body.
 func (ac *AuthClient) Login(ctx context.Context, username, password string) (*models.LoginResponse, error) {
-	// Check cache first
-	cacheKey := cache.BuildCacheKey(username, ac.client.tenant)
-	if cachedToken, found := ac.tokenCache.Get(cacheKey); found {
-		if !cachedToken.NeedsRefresh() {
-			// Return cached token
-			return &models.LoginResponse{
-				OkapiToken:   cachedToken.AccessToken,
-				RefreshToken: cachedToken.RefreshToken,
-				AccessToken:  cachedToken.AccessToken,
-				ExpiresAt:    cachedToken.ExpiresAt,
-			}, nil
-		}
-	}
-
-	// Perform login
 	loginReq := models.LoginRequest{
 		Username: username,
 		Password: password,
 	}
 
 	var loginResp models.LoginResponse
-	err := ac.client.Post(ctx, "/authn/login", "", loginReq, &loginResp)
+	cookies, err := ac.client.PostWithCookies(ctx, "/authn/login-with-expiry", "", loginReq, &loginResp)
 	if err != nil {
 		return nil, fmt.Errorf("login failed: %w", err)
 	}
 
-	// Determine token to use
-	token := loginResp.OkapiToken
-	if token == "" {
-		token = loginResp.AccessToken
+	if err := fillTokens(&loginResp, cookies); err != nil {
+		return nil, fmt.Errorf("login failed: %w", err)
 	}
 
-	if token == "" {
-		return nil, fmt.Errorf("no token received from login")
-	}
-
-	// Calculate expiration (default to 10 minutes if not provided)
-	rawExpiresIn := loginResp.ExpiresIn
-	expiresIn := rawExpiresIn
-	usingDefault := false
-	if expiresIn == 0 {
-		expiresIn = 600 // 10 minutes default
-		usingDefault = true
-	}
-	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
-
-	// Debug logging for token expiration troubleshooting (Phase 1.1/1.2)
-	if authLogger != nil {
-		authLogger.Debug("FOLIO token expiration details",
-			logging.TypeField(logging.TypeApplication),
-			zap.String("username", username),
-			zap.Int("raw_expires_in_from_folio", rawExpiresIn),
-			zap.Int("effective_expires_in_seconds", expiresIn),
-			zap.Bool("using_default_600s", usingDefault),
-			zap.Time("calculated_expires_at", expiresAt),
-			zap.Duration("token_lifetime", time.Duration(expiresIn)*time.Second),
-		)
-	}
-
-	// Cache the token
-	tokenCache := &models.TokenCache{
-		AccessToken:  token,
-		RefreshToken: loginResp.RefreshToken,
-		Username:     username,
-		ExpiresAt:    expiresAt,
-	}
-
-	// Get user ID if available
-	if loginResp.User != nil {
-		tokenCache.UserID = loginResp.User.ID
-	}
-
-	// Store in cache
-	if err := ac.tokenCache.Set(cacheKey, tokenCache); err != nil {
-		// Log warning but don't fail the request
-		// Token is still valid, just not cached
-	}
-
-	// Set expiration in response
-	loginResp.ExpiresAt = expiresAt
-
+	logTokenExpirations("login", username, &loginResp)
 	return &loginResp, nil
 }
 
-// ValidateToken validates a token by attempting to use it
-func (ac *AuthClient) ValidateToken(ctx context.Context, token string) (bool, error) {
-	// Try to get current user with the token
-	var user models.User
-	err := ac.client.Get(ctx, "/users/_self", token, &user)
+// Refresh exchanges a refresh token for a new access/refresh token pair via /authn/refresh.
+// The refresh token is rotated: callers must replace both stored tokens with the result.
+func (ac *AuthClient) Refresh(ctx context.Context, refreshToken string) (*models.LoginResponse, error) {
+	if refreshToken == "" {
+		return nil, ErrNoRefreshToken
+	}
+
+	var refreshResp models.LoginResponse
+	cookies, err := ac.client.PostWithCookies(ctx, "/authn/refresh", "", nil, &refreshResp,
+		&http.Cookie{Name: RefreshTokenCookie, Value: refreshToken})
 	if err != nil {
-		if httpErr, ok := err.(*HTTPError); ok {
-			if httpErr.IsUnauthorized() {
-				return false, nil
+		return nil, fmt.Errorf("token refresh failed: %w", err)
+	}
+
+	if err := fillTokens(&refreshResp, cookies); err != nil {
+		return nil, fmt.Errorf("token refresh failed: %w", err)
+	}
+
+	logTokenExpirations("refresh", "", &refreshResp)
+	return &refreshResp, nil
+}
+
+// Logout ends the Keycloak session that refreshToken belongs to via /authn/logout.
+//
+// TRAP: on Eureka (mod-login-keycloak), a logout that carries an access token (header or
+// cookie) with a missing, blank or whitespace refresh token ends EVERY session of the user,
+// i.e. every SIP device sharing the kiosk username. The guards below therefore run before
+// any request is built, and the access token is only ever sent from here, as a cookie,
+// next to a validated refresh token. The X-Okapi-Token header is never sent.
+//
+// The access token must be current: the gateway rejects an expired one (401) and nothing
+// is ended. Callers refresh first when it has expired.
+func (ac *AuthClient) Logout(ctx context.Context, accessToken, refreshToken string) error {
+	if strings.TrimSpace(refreshToken) == "" {
+		return ErrNoRefreshToken
+	}
+	if !isJWTShaped(refreshToken) {
+		return ErrInvalidRefreshToken
+	}
+	if strings.TrimSpace(accessToken) == "" {
+		return ErrNoAccessToken
+	}
+
+	_, err := ac.client.PostWithCookies(ctx, "/authn/logout", "", nil, nil,
+		&http.Cookie{Name: RefreshTokenCookie, Value: refreshToken},
+		&http.Cookie{Name: AccessTokenCookie, Value: accessToken})
+	if err != nil {
+		return fmt.Errorf("logout failed: %w", err)
+	}
+	return nil
+}
+
+// isJWTShaped reports whether token is in JWT compact form: 3 dot-separated segments
+// (signed, JWS) or 5 (encrypted, JWE). Every segment must be non-empty, except a JWE's
+// second segment (the encrypted key), which is empty for direct encryption ("alg":"dir",
+// RFC 7516), e.g. Okapi mod-authtoken refresh tokens. It catches corrupted values such as
+// "null" or a truncated token that are not blank but that the server might treat as blank.
+func isJWTShaped(token string) bool {
+	if strings.ContainsAny(token, " \t\r\n") {
+		return false
+	}
+	segments := strings.Split(token, ".")
+	if len(segments) != 3 && len(segments) != 5 {
+		return false
+	}
+	for i, segment := range segments {
+		if segment == "" && !(len(segments) == 5 && i == 1) {
+			return false
+		}
+	}
+	return true
+}
+
+// TokenShape describes a token's structure for diagnostics without revealing it:
+// the number of dot-separated segments and the 1-based positions of empty ones.
+func TokenShape(token string) string {
+	segments := strings.Split(token, ".")
+	var empty []string
+	for i, segment := range segments {
+		if segment == "" {
+			empty = append(empty, fmt.Sprint(i+1))
+		}
+	}
+	shape := fmt.Sprintf("%d segments, length %d", len(segments), len(token))
+	if len(empty) > 0 {
+		shape += ", empty: " + strings.Join(empty, ",")
+	}
+	if strings.ContainsAny(token, " \t\r\n") {
+		shape += ", contains whitespace"
+	}
+	return shape
+}
+
+// fillTokens copies the tokens from the response cookies into resp and sets ExpiresAt.
+func fillTokens(resp *models.LoginResponse, cookies []*http.Cookie) error {
+	access, refresh, err := extractTokens(cookies)
+	if err != nil {
+		return err
+	}
+	if resp.AccessTokenExpiration.IsZero() {
+		return fmt.Errorf("response has no accessTokenExpiration")
+	}
+
+	resp.OkapiToken = access
+	resp.RefreshToken = refresh
+	resp.ExpiresAt = resp.AccessTokenExpiration
+	return nil
+}
+
+// extractTokens returns the access and refresh tokens from the response cookies.
+// It returns an error naming any cookie that is missing or empty.
+func extractTokens(cookies []*http.Cookie) (access, refresh string, err error) {
+	for _, cookie := range cookies {
+		switch cookie.Name {
+		case AccessTokenCookie:
+			if access == "" {
+				access = cookie.Value
+			}
+		case RefreshTokenCookie:
+			if refresh == "" {
+				refresh = cookie.Value
 			}
 		}
-		return false, err
 	}
 
-	return true, nil
-}
-
-// GetCachedToken retrieves a cached token
-func (ac *AuthClient) GetCachedToken(username string) (*models.TokenCache, bool) {
-	cacheKey := cache.BuildCacheKey(username, ac.client.tenant)
-	return ac.tokenCache.Get(cacheKey)
-}
-
-// InvalidateToken removes a token from the cache
-func (ac *AuthClient) InvalidateToken(username string) {
-	cacheKey := cache.BuildCacheKey(username, ac.client.tenant)
-	ac.tokenCache.Delete(cacheKey)
-}
-
-// ClearCache clears all cached tokens
-func (ac *AuthClient) ClearCache() {
-	ac.tokenCache.Clear()
-}
-
-// LoginAndCache performs login and ensures token is cached
-func (ac *AuthClient) LoginAndCache(ctx context.Context, username, password string) (string, error) {
-	loginResp, err := ac.Login(ctx, username, password)
-	if err != nil {
-		return "", err
+	if access == "" {
+		return "", "", fmt.Errorf("response has no %s cookie", AccessTokenCookie)
 	}
-
-	token := loginResp.OkapiToken
-	if token == "" {
-		token = loginResp.AccessToken
+	if refresh == "" {
+		return "", "", fmt.Errorf("response has no %s cookie", RefreshTokenCookie)
 	}
-
-	return token, nil
+	return access, refresh, nil
 }
 
-// GetOrRefreshToken gets a cached token or refreshes it if needed
-func (ac *AuthClient) GetOrRefreshToken(ctx context.Context, username, password string) (string, error) {
-	// Try to get from cache
-	cacheKey := cache.BuildCacheKey(username, ac.client.tenant)
-	if cachedToken, found := ac.tokenCache.Get(cacheKey); found {
-		if !cachedToken.NeedsRefresh() {
-			return cachedToken.AccessToken, nil
-		}
+// logTokenExpirations logs both expirations at debug level. Token values are never logged.
+func logTokenExpirations(operation, username string, resp *models.LoginResponse) {
+	if authLogger == nil {
+		return
 	}
-
-	// Need to refresh - perform new login
-	return ac.LoginAndCache(ctx, username, password)
+	authLogger.Debug("FOLIO token expiration details",
+		logging.TypeField(logging.TypeApplication),
+		zap.String("operation", operation),
+		zap.String("username", username),
+		zap.Time("access_expires_at", resp.AccessTokenExpiration),
+		zap.Time("refresh_expires_at", resp.RefreshTokenExpiration),
+	)
 }
