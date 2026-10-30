@@ -25,6 +25,7 @@ FSIP2 is a bridge application that connects self-service library kiosks with the
 - **Token Expiration Validation**: Automatic detection and refresh of expired FOLIO authentication tokens with 90-second safety buffer
 - **Session Token Tracking**: Enhanced session management with token expiration timestamps
 - **Improved Error Handling**: Better handling of authentication failures and token refresh scenarios
+- **Keycloak Session Cleanup**: A SIP connection's Keycloak session is ended when the connection closes or a 93 Login replaces it, instead of staying alive until its refresh token expires. **Behaviour change:** if a 93 moves a connection to a different tenant and that login fails, the connection is no longer left authenticated with the previous tenant's tokens; it must log in again
 
 ### Testing & Code Quality
 - **Comprehensive Test Suite**: 86.9% overall coverage with most packages exceeding 85%
@@ -50,7 +51,7 @@ FSIP2 is a bridge application that connects self-service library kiosks with the
 - ✅ Renew All (65/66)
 - ✅ End Patron Session (35/36)
 - ✅ Fee Paid (37/38)
-- ⚠️ Item Status Update (19/20) - Planned/Partial
+- ⚠️ Item Status Update (19/20) - Planned/Partial: it currently replies ok = 1 **without changing anything in FOLIO**. Don't rely on it
 - ✅ Login (93/94)
 - ✅ SC/ACS Status (99/98)
 - ✅ Resend (97/96)
@@ -83,45 +84,78 @@ See See [documentation/field_mapping.md](documentation/field_mapping.md) for com
 
 ### Security
 - TLS/SSL support
-- Token-based authentication with caching and automatic expiration validation
-- Automatic token refresh for expired credentials
+- Kiosk (SIP 93) login via `POST /authn/login-with-expiry`. Tokens arrive as `folioAccessToken` / `folioRefreshToken` cookies; the access token is then sent as `X-Okapi-Token`
+- Token lifetimes come from the server (`accessTokenExpiration`), not an assumed default. Tokens are held per SIP connection, never shared between connections
+- Automatic renewal 90 s before expiry via `POST /authn/refresh` (same Keycloak session), falling back to a fresh login with the stored kiosk credentials
+- **Keep the host/pod clock NTP-synced.** Expirations are absolute server times; the 90 s buffer covers normal drift only
+- **Keycloak session cleanup:** fsip2 ends its Keycloak session (`POST /authn/logout`) when a SIP connection closes (client disconnect, idle timeout or error) and when a 93 Login on an open connection replaces it. There is one session per SIP connection, so 8 AMH units sharing a kiosk username hold 8 sessions, and ending one never affects the others
+  - Sessions open when fsip2 restarts are **not** ended; they expire on their own after the refresh-token lifetime (configured in each tenant)
+  - Logout is best-effort (3 s limit) and never delays a SIP response. An expired access token is refreshed first, because the gateway rejects a logout with an expired one
+  - **Never use `/authn/logout-all`, or a logout without the refresh token, for a kiosk user:** on Eureka that ends **every** session of the username, i.e. every SIP device at the branch. See [documentation/eureka_capabilities.md](documentation/eureka_capabilities.md#keycloak-sessions)
+- Token values are never logged
 - PIN/password obfuscation in logs
 
 
 #### Permissions
-All permission required for fsip2:
+Grant these to each kiosk's FOLIO user (the 93 Login CN/CO account). On **Eureka** they are capabilities in two roles, **`SIP2 Service`** (required) and **`SIP2 Rolling Renewal`** (optional, assigned in addition). On **Okapi** grant the Okapi permissions. The exact POSTs to create and assign the roles, verification queries and 403 troubleshooting are in [documentation/eureka_capabilities.md](documentation/eureka_capabilities.md).
 
-```
-			"accounts.collection.get",
-			"accounts.item.get",
-			"accounts.pay.post",
-			"automated-patron-blocks.collection.get",
-			"circulation.check-in-by-barcode.post",
-			"circulation.check-out-by-barcode.post",
-			"circulation.loans.collection.get",
-			"circulation.renew-by-barcode.post",
-			"circulation.renew-by-id.post",
-			"circulation.requests.collection.get",
-			"configuration.entries.collection.get",
-			"configuration.entries.item.get",
-			"feefines.collection.get",
-			"inventory.instances.item.get",
-			"inventory.items.collection.get",
-			"inventory.items.item.get",
-			"inventory-storage.holdings.item.get",
-			"inventory-storage.service-points.item.get",
-			"manualblocks.collection.get",
-			"manualblocks.item.get",
-			"patron-pin.validate",
-			"search.instances.collection.get",
-			"usergroups.collection.get",
-			"usergroups.collection.get",
-			"usergroups.item.get",
-			"users.collection.get",
-			"users.item.get",
-			"users-bl.item.get",
-				"users.item.put" (optional, see rollingRenewals feature for details)
-```
+**Required: called by fsip2** (role `SIP2 Service`)
+<!-- fsip2-capabilities:service-direct -->
+| Okapi permission | Eureka capability |
+|---|---|
+| `circulation.check-out-by-barcode.post` | `circulation_check-out-by-barcode.execute` |
+| `circulation.check-in-by-barcode.post` | `circulation_check-in-by-barcode.execute` |
+| `circulation.renew-by-barcode.post` | `circulation_renew-by-barcode.execute` |
+| `circulation.renew-by-id.post` | `circulation_renew-by-id.execute` |
+| `circulation.loans.collection.get` | `circulation_loans_collection.view` |
+| `circulation.requests.collection.get` | `circulation_requests_collection.view` |
+| `accounts.collection.get` | `accounts_collection.view` |
+| `accounts.pay.post` ¹ / `feesfines.accounts.pay.post` | `feesfines_accounts_pay.execute` |
+| `feesfines.accounts-bulk.pay.post` | `feesfines_accounts-bulk_pay.execute` |
+| `manualblocks.collection.get` | `manualblocks_collection.view` |
+| `automated-patron-blocks.collection.get` ¹ / `patron-blocks.automated-patron-blocks.collection.get` | `patron-blocks_automated-patron-blocks_collection.view` |
+| `inventory.items.collection.get` | `inventory_items_collection.view` |
+| `inventory.items.item.get` | `inventory_items_item.view` |
+| `inventory.instances.item.get` | `inventory_instances_item.view` |
+| `inventory-storage.holdings.item.get` | `inventory-storage_holdings_item.view` |
+| `inventory-storage.locations.item.get` | `inventory-storage_locations_item.view` |
+| `inventory-storage.material-types.item.get` | `inventory-storage_material-types_item.view` |
+| `inventory-storage.service-points.item.get` | `inventory-storage_service-points_item.view` |
+| `users.collection.get` | `users_collection.view` |
+| `users.item.get` | `users_item.view` |
+| `usergroups.item.get` | `usergroups_item.view` |
+| `patron-pin.validate` | `patron-pin_validate.execute` |
+<!-- /fsip2-capabilities -->
+
+¹ On **Okapi**, grant `accounts.pay.post` and `automated-patron-blocks.collection.get`; these are the names verified on Okapi. The second name in each row is the one in the Trillium module descriptors, which the Eureka capability is derived from.
+
+**Required: used internally by FOLIO modules** (role `SIP2 Service`; kept as a precaution)
+<!-- fsip2-capabilities:service-transitive -->
+| Okapi permission | Eureka capability |
+|---|---|
+| `manualblocks.item.get` | `manualblocks_item.view` |
+| `usergroups.collection.get` | `usergroups_collection.view` |
+| `feefines.collection.get` | `feefines_collection.view` |
+| `configuration.entries.collection.get` | `configuration_entries_collection.view` |
+| `configuration.entries.item.get` | `configuration_entries_item.view` |
+| `accounts.item.get` | `accounts_item.view` |
+| `users-bl.item.get` | `users-bl_item.view` |
+| `search.instances.collection.get` | `search_instances_collection.view` |
+<!-- /fsip2-capabilities -->
+
+**Optional: Rolling Renewal** (role `SIP2 Rolling Renewal`; only where `rollingRenewals` is enabled)
+<!-- fsip2-capabilities:rolling-renewal -->
+| Okapi permission | Eureka capability |
+|---|---|
+| `users.item.get` | `users_item.view` |
+| `users.item.put` | `users_item.edit` |
+<!-- /fsip2-capabilities -->
+
+On a 403, fsip2 logs `FOLIO denied access` (WARN) with the missing Okapi permission, Eureka capability and role.
+
+#### Eureka
+- Point `okapiUrl` at the Kong gateway URL. The key names (`okapiUrl`, `okapiTenant`) are unchanged.
+- **⚠ Patron verification is PIN only on Eureka.** If `patronPasswordVerificationRequired: true`, set `usePinForPatronVerification: true`. Password mode (`usePinForPatronVerification: false`) fails on Eureka. The key has **no default**, so omitting it selects password mode. See [documentation/eureka_capabilities.md](documentation/eureka_capabilities.md#patron-verification-pin-only-on-eureka).
 
 ### Monitoring
 - Prometheus metrics
@@ -133,7 +167,9 @@ All permission required for fsip2:
 ### Prerequisites
 
 - Go 1.23 or higher
-- Access to a FOLIO Okapi instance
+- Access to a FOLIO instance:
+  - **Eureka** (Trillium / R1-2026 or later), using the Kong gateway URL as `okapiUrl`, or
+  - **Okapi Poppy or later** (mod-login v7.10.0+). **Breaking change:** fsip2 no longer calls the deprecated `/authn/login`, so tenants on Orchid or older must stay on the previous fsip2 release
 - (Optional) Docker for containerized deployment
 
 ### Installation
@@ -222,8 +258,8 @@ projectroot/
 
 Configure log level in the YAML file with the following options:
 
-- **Debugging**: All messages (inbound and outbound) are logged. Service logins, message format and content, etc. with no obfuscation.
-- **Full**: All messages (inbound and outbound) are logged. Excludes 93 & 94 login messages and PINs are obfuscated.
+- **Debugging**: All messages (inbound and outbound) are logged. Service logins, 98 & 99 client heartbeats, message format and content, etc. with no obfuscation.
+- **Full**: All messages (inbound and outbound) are logged. Excludes 93 & 94 login messages and 98 & 99 client heartbeat (SC/ACS Status) messages, and PINs are obfuscated.
 - **Patron**: Messages (63 inbound and 64 outbound) related to patron information are logged with PINs obfuscated.
 - **None**: Default. No logging takes place.
 
@@ -508,7 +544,6 @@ FSIP2 has a comprehensive test suite with multiple testing layers to ensure reli
 **Current Coverage: 86.9%**
 
 **Package-Level Coverage:**
-- `internal/cache`: 100.0% - Full coverage of token caching
 - `internal/helpers`: 100.0% - Helper utilities
 - `internal/localization`: 100.0% - Localization support
 - `internal/metrics`: 100.0% - Complete metrics instrumentation
@@ -581,7 +616,8 @@ This separation ensures fast feedback during development while maintaining compr
 
 ### Key Features Tested
 
-- **Token Expiration & Refresh**: Automatic detection and refresh of expired FOLIO authentication tokens
+- **Token Expiration & Refresh**: Server-provided expirations, renewal via `/authn/refresh` with re-login fallback, refresh-token rotation, and no use of the deprecated `/authn/login`
+- **Keycloak Session Cleanup**: logout on close, 93 re-login and renewal fallback; the mock FOLIO server reproduces the Trillium `/authn/logout` behaviour, including the blank-refresh-token trap, and every logout test asserts it never fires
 - **Multi-Tenant Resolution**: IP-based, port-based, service point, and username-prefix tenant/configuration routing
 - **SIP2 Protocol**: All 13 message types with field validation
 - **FOLIO Integration**: API client with retry logic and error handling
@@ -683,8 +719,7 @@ Available metrics:
 
 - `okapiUrl`: FOLIO Okapi base URL
 - `healthCheckPort`: Health check HTTP port (default: 8081)
-- `tokenCacheCapacity`: Maximum cached tokens (default: 100)
-- `tokenCacheTTL`: Token cache time-to-live with automatic expiration validation
+- `tokenCacheCapacity`: **Deprecated, ignored.** Tokens are held per SIP connection. A config that still sets it loads normally and logs one startup warning
 - `scanPeriod`: Config reload interval in ms (default: 300000)
 - `port`: SIP2 server port (default: 6443)
   - Additional ports added if specified in scTenants (see section below)
@@ -832,7 +867,8 @@ scTenants:
 ### Authentication Failures
 - Verify Okapi URL is correct
 - Check tenant credentials
-- Review token cache settings
+- On Okapi, confirm the platform is Poppy or later (`/authn/login-with-expiry` must exist)
+- Look for `Token renewal` WARN lines (`method=refresh|relogin`, with the HTTP status)
 
 ### Message Parsing Errors
 - Verify character encoding matches SIP2 client

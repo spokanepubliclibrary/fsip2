@@ -106,19 +106,6 @@ func TestHasAuthCredentials_MissingUsername(t *testing.T) {
 	}
 }
 
-func TestUpdateToken(t *testing.T) {
-	s := NewSession("s1", nil)
-	expiry := time.Now().Add(2 * time.Hour)
-	s.UpdateToken("new-token", expiry)
-
-	if s.GetAuthToken() != "new-token" {
-		t.Errorf("GetAuthToken = %q, want %q", s.GetAuthToken(), "new-token")
-	}
-	if !s.GetTokenExpiresAt().Equal(expiry) {
-		t.Errorf("GetTokenExpiresAt = %v, want %v", s.GetTokenExpiresAt(), expiry)
-	}
-}
-
 func TestUpdateActivity(t *testing.T) {
 	s := NewSession("s1", nil)
 	before := s.LastActivity
@@ -365,4 +352,118 @@ func TestConcurrentAccess(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestUpdateTokens(t *testing.T) {
+	session := NewSession("test-session", newTestTenantConfig())
+	accessExp := time.Now().Add(10 * time.Minute)
+	refreshExp := time.Now().Add(24 * time.Hour)
+
+	session.UpdateTokens("access-1", accessExp, "refresh-1", refreshExp)
+
+	if session.GetAuthToken() != "access-1" {
+		t.Errorf("GetAuthToken() = %q, want access-1", session.GetAuthToken())
+	}
+	if !session.GetTokenExpiresAt().Equal(accessExp) {
+		t.Errorf("GetTokenExpiresAt() = %v, want %v", session.GetTokenExpiresAt(), accessExp)
+	}
+	refresh, gotRefreshExp := session.GetRefreshToken()
+	if refresh != "refresh-1" || !gotRefreshExp.Equal(refreshExp) {
+		t.Errorf("GetRefreshToken() = (%q, %v), want (refresh-1, %v)", refresh, gotRefreshExp, refreshExp)
+	}
+}
+
+func TestSetAuthenticated_KeepsRefreshToken(t *testing.T) {
+	// Patron Status (23) calls SetAuthenticated with the current token; the refresh token must survive.
+	session := NewSession("test-session", newTestTenantConfig())
+	session.UpdateTokens("access-1", time.Now().Add(10*time.Minute), "refresh-1", time.Now().Add(time.Hour))
+
+	session.SetAuthenticated("user", "patron-id", "barcode", "access-1", time.Now().Add(10*time.Minute))
+
+	if refresh, _ := session.GetRefreshToken(); refresh != "refresh-1" {
+		t.Errorf("refresh token = %q after SetAuthenticated, want refresh-1", refresh)
+	}
+}
+
+func TestHasValidRefreshToken(t *testing.T) {
+	buffer := TokenExpiryBuffer
+	tests := []struct {
+		name    string
+		token   string
+		expires time.Time
+		want    bool
+	}{
+		{"no token", "", time.Now().Add(time.Hour), false},
+		{"no expiry", "refresh-1", time.Time{}, false},
+		{"expired", "refresh-1", time.Now().Add(-time.Minute), false},
+		{"inside buffer", "refresh-1", time.Now().Add(buffer - 5*time.Second), false},
+		{"just outside buffer", "refresh-1", time.Now().Add(buffer + 5*time.Second), true},
+		{"well in future", "refresh-1", time.Now().Add(24 * time.Hour), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := NewSession("test-session", newTestTenantConfig())
+			session.UpdateTokens("access-1", time.Now().Add(time.Hour), tt.token, tt.expires)
+			if got := session.HasValidRefreshToken(buffer); got != tt.want {
+				t.Errorf("HasValidRefreshToken() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClear_ClearsRefreshToken(t *testing.T) {
+	session := NewSession("test-session", newTestTenantConfig())
+	session.UpdateTokens("access-1", time.Now().Add(time.Hour), "refresh-1", time.Now().Add(time.Hour))
+
+	session.Clear()
+
+	if refresh, exp := session.GetRefreshToken(); refresh != "" || !exp.IsZero() {
+		t.Errorf("GetRefreshToken() after Clear = (%q, %v), want empty", refresh, exp)
+	}
+}
+
+func TestClone_DoesNotCopyRefreshToken(t *testing.T) {
+	session := NewSession("test-session", newTestTenantConfig())
+	session.UpdateTokens("access-1", time.Now().Add(time.Hour), "refresh-1", time.Now().Add(time.Hour))
+
+	clone := session.Clone()
+
+	if refresh, _ := clone.GetRefreshToken(); refresh != "" {
+		t.Errorf("Clone copied the refresh token %q", refresh)
+	}
+	if clone.GetAuthToken() != "access-1" {
+		t.Errorf("Clone access token = %q, want access-1", clone.GetAuthToken())
+	}
+}
+
+func TestRenewalLock_Serialises(t *testing.T) {
+	session := NewSession("test-session", newTestTenantConfig())
+	var mu sync.Mutex
+	active, maxActive := 0, 0
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			session.LockRenewal()
+			defer session.UnlockRenewal()
+			mu.Lock()
+			active++
+			if active > maxActive {
+				maxActive = active
+			}
+			mu.Unlock()
+			time.Sleep(time.Millisecond)
+			mu.Lock()
+			active--
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if maxActive != 1 {
+		t.Errorf("max concurrent holders = %d, want 1", maxActive)
+	}
 }

@@ -103,6 +103,7 @@ func TestLogin_SkipsFOLIO_WhenSessionTokenValid(t *testing.T) {
 
 	// Seed a valid token that expires well beyond the 90 s buffer.
 	session.SetAuthenticated("testuser", "", "", "valid-token", time.Now().Add(10*time.Minute))
+	session.SetAuthCredentials("testpass")
 
 	msg := &parser.Message{
 		Code:   parser.LoginRequest,

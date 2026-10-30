@@ -40,6 +40,7 @@ type Messages struct {
 	HoldNotPermitted     string `json:"hold_not_permitted"`
 	InvalidPassword      string `json:"invalid_password"`
 	ServiceUnavailable   string `json:"service_unavailable"`
+	PermissionDenied     string `json:"permission_denied"` // FOLIO returned 403: the kiosk user lacks a capability
 
 	// Validation messages
 	RequiredFieldMissing string `json:"required_field_missing"`

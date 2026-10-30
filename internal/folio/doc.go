@@ -15,11 +15,24 @@
 //
 // # Authentication
 //
-// FOLIO API authentication uses Okapi tokens:
-//  1. Client calls Authenticate() with username/password
-//  2. FOLIO returns an x-okapi-token header
-//  3. Token is included in all subsequent requests
-//  4. Tokens are cached per session to avoid re-authentication
+// Kiosk authentication (AuthClient) works the same on Eureka and Okapi Poppy+:
+//  1. Login posts username/password to /authn/login-with-expiry. The access and refresh
+//     tokens arrive as folioAccessToken / folioRefreshToken Set-Cookie headers; the body
+//     carries their absolute expirations.
+//  2. The access token is sent as X-Okapi-Token on every subsequent request.
+//  3. Refresh posts only the folioRefreshToken cookie to /authn/refresh and receives a new
+//     pair. Refresh tokens rotate, so both stored tokens are replaced together.
+//  4. If refresh fails or the refresh token has expired, the caller logs in again.
+//  5. Logout posts the folioRefreshToken and folioAccessToken cookies to /authn/logout,
+//     which ends only the Keycloak session that refresh token belongs to. It refuses (no
+//     request) an empty, whitespace or non-JWT-shaped refresh token, or an empty access
+//     token: on Eureka an access token with a blank refresh token ends EVERY session of
+//     the user. The access token must be current (the gateway rejects an expired one), so
+//     callers refresh first; handlers.LogoutTokens does that and sends the request to the
+//     tenant that issued the pair.
+//
+// Tokens are owned per SIP connection by types.Session; there is no shared token cache.
+// The /authn/* calls never send X-Okapi-Token (PostWithCookies with an empty token).
 //
 // # HTTP Client Pooling
 //
@@ -41,10 +54,20 @@
 //   - IsNotFound(): Checks for 404 errors
 //   - IsUnauthorized(): Checks for 401 errors
 //   - IsForbidden(): Checks for 403 errors
-//   - IsBadRequest(): Checks for 400 errors
-//   - IsPermissionError(): Checks for permission-related errors
+//   - PermissionError: returned for every 403. It names the Okapi permission, Eureka
+//     capability and fsip2 role the endpoint needs (looked up in Capabilities), wraps the
+//     *HTTPError, and is logged at WARN. Eureka's own 403 names no capability.
+//   - IsPermissionError(err): Package function; true if err is or wraps a PermissionError
 //
 // FOLIO error responses are parsed and included in the error message.
+//
+// # Capabilities
+//
+// capabilities.go holds the single table of every FOLIO endpoint fsip2 calls, with its
+// Okapi permission, Eureka capability and role (SIP2 Service, SIP2 Rolling Renewal), plus
+// the permissions FOLIO modules use internally and the placeholders' future needs. The
+// README, documentation/eureka_capabilities.md and the mock server's enforcement mode are
+// tested against it. Add a row whenever a new FOLIO call is added.
 //
 // # Context Support
 //
@@ -57,7 +80,8 @@
 // # Request/Response Flow
 //
 //  1. Client creates HTTP request with context
-//  2. Sets required Okapi headers (x-okapi-tenant, x-okapi-token, x-okapi-url)
+//  2. Sets the X-Okapi-Tenant and X-Okapi-Token headers (the same names on Okapi and on
+//     the Eureka/Kong gateway)
 //  3. Marshals request body to JSON (if applicable)
 //  4. Sends request via shared HTTP client
 //  5. Reads response body
@@ -79,16 +103,19 @@
 // PatronClient (/users, /bl-users, /automated-patron-blocks, /manualblocks):
 //   - GetUserByBarcode: Lookup patron by barcode
 //   - GetUserByID: Lookup patron by UUID
-//   - Authenticate: Verify patron credentials
-//   - GetAutomatedBlocksByUserId: Get system-generated blocks
-//   - GetManualBlocksByUserId: Get staff-created blocks
+//   - VerifyPatronPin / VerifyPatronPasswordWithLogin: Verify patron credentials
+//   - GetAutomatedPatronBlocks: Get system-generated blocks
+//   - GetManualBlocks: Get staff-created blocks
+//   - GetPatronGroupByID: Get patron group details
+//   - UpdateUserExpiration: Extend a patron's expiration date (raw-map PUT)
 //
 // CirculationClient (/circulation):
-//   - PostCheckout: Check out an item to a patron
-//   - PostCheckin: Check in an item
-//   - PostRenew: Renew a loan
-//   - GetLoansByUserId: Get patron's active loans
-//   - GetRequestsByUserId: Get patron's requests (holds)
+//   - Checkout: Check out an item to a patron
+//   - Checkin: Check in an item
+//   - Renew / RenewByID: Renew a loan
+//   - GetOpenLoansByUser: Get patron's open loans
+//   - GetAvailableHolds / GetUnavailableHolds: Get patron's holds by state
+//   - GetLoansByItem: Get open loans for a specific item
 //   - GetRequestsByItem: Get requests for a specific item
 //
 // InventoryClient (/inventory, /holdings-storage, /instance-storage):
@@ -100,35 +127,49 @@
 //   - GetMaterialTypeByID: Get material type details
 //   - GetServicePointByID: Get service point details
 //
-// FeesClient (/accounts):
-//   - GetAccountsByUserId: Get patron's fees/fines
-//   - PostPayment: Record a payment
+// FeesClient (/accounts, /accounts-bulk):
+//   - GetOpenAccountsExcludingSuspended: Get patron's open fees/fines
+//   - GetEligibleAccountByID: Get one account if it is eligible for payment
+//   - PayAccount / PayBulkAccounts: Pay one account, or several in one call
+//
+// # Placeholders
+//
+// These methods are PLACEHOLDER – NOT FOR USE roadmap stubs. Each returns
+// ErrNotImplemented without making an HTTP call and is not covered by any role;
+// see each method's doc comment for the future spec:
+//   - CirculationClient: RenewAll, CreateRequest, CancelRequest
+//   - InventoryClient: UpdateItemStatus, SearchInstances, SearchInstancesByTitle,
+//     SearchInstancesByISBN
+//   - PatronClient: GetUserByUsername
 //
 // # Usage Example
 //
 //	// Create clients
+//	authClient := folio.NewAuthClient(okapiURL, tenant)
 //	patronClient := folio.NewPatronClient(okapiURL, tenant)
 //	circClient := folio.NewCirculationClient(okapiURL, tenant)
 //
-//	// Authenticate patron
-//	token, err := patronClient.Authenticate(ctx, username, password)
+//	// Log in as the kiosk user
+//	login, err := authClient.Login(ctx, username, password)
 //	if err != nil {
 //	    return fmt.Errorf("authentication failed: %w", err)
 //	}
+//	token := login.OkapiToken
 //
 //	// Lookup user
 //	user, err := patronClient.GetUserByBarcode(ctx, token, "12345678")
 //	if err != nil {
-//	    if folio.IsNotFound(err) {
+//	    var httpErr *folio.HTTPError
+//	    if errors.As(err, &httpErr) && httpErr.IsNotFound() {
 //	        return errors.New("patron not found")
 //	    }
 //	    return err
 //	}
 //
 //	// Checkout item
-//	loan, err := circClient.PostCheckout(ctx, token, &folio.CheckoutRequest{
-//	    ItemBarcode:  "ITEM123",
-//	    UserBarcode:  "12345678",
-//	    ServicePointId: spID,
+//	loan, err := circClient.Checkout(ctx, token, folio.CheckoutRequest{
+//	    ItemBarcode:    "ITEM123",
+//	    UserBarcode:    "12345678",
+//	    ServicePointID: spID,
 //	})
 package folio

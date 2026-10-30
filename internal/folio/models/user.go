@@ -128,36 +128,6 @@ func (u *User) IsExpired() bool {
 	return u.ExpirationDate.Before(time.Now())
 }
 
-// HasBlocks checks if the user has any blocks (manual or automated)
-func (mb *ManualBlockCollection) HasBorrowingBlock() bool {
-	for _, block := range mb.ManualBlocks {
-		if block.Borrowing {
-			return true
-		}
-	}
-	return false
-}
-
-// HasRenewalsBlock checks if blocks prevent renewals
-func (mb *ManualBlockCollection) HasRenewalsBlock() bool {
-	for _, block := range mb.ManualBlocks {
-		if block.Renewals {
-			return true
-		}
-	}
-	return false
-}
-
-// HasRequestsBlock checks if blocks prevent requests
-func (mb *ManualBlockCollection) HasRequestsBlock() bool {
-	for _, block := range mb.ManualBlocks {
-		if block.Requests {
-			return true
-		}
-	}
-	return false
-}
-
 // GetCustomField retrieves a custom field value by key
 // Returns the value and true if found, nil and false if not found
 func (u *User) GetCustomField(key string) (interface{}, bool) {

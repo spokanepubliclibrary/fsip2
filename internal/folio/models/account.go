@@ -105,12 +105,6 @@ type FeeFineAction struct {
 	Metadata               Metadata   `json:"metadata,omitempty"`
 }
 
-// FeeFineActionCollection represents a collection of fee/fine actions
-type FeeFineActionCollection struct {
-	FeeFineActions []FeeFineAction `json:"feefineactions"`
-	TotalRecords   int             `json:"totalRecords"`
-}
-
 // Payment represents a payment request for bulk payment operations
 type Payment struct {
 	Amount                 string   `json:"amount"`
@@ -139,25 +133,9 @@ func (a *Account) IsOpen() bool {
 	return a.Status.Name == "Open"
 }
 
-// IsOutstanding checks if the account has outstanding balance
-func (a *Account) IsOutstanding() bool {
-	return a.Remaining.Float64() > 0
-}
-
 // IsPaid checks if the account is paid
 func (a *Account) IsPaid() bool {
 	return a.PaymentStatus.Name == "Paid fully"
-}
-
-// GetTotalOutstanding calculates total outstanding balance from accounts
-func (ac *AccountCollection) GetTotalOutstanding() float64 {
-	total := 0.0
-	for _, account := range ac.Accounts {
-		if account.IsOutstanding() {
-			total += account.Remaining.Float64()
-		}
-	}
-	return total
 }
 
 // GetOpenAccounts returns all open accounts

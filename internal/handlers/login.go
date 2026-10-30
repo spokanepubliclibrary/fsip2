@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"time"
 
@@ -56,11 +57,13 @@ func (h *LoginHandler) Handle(ctx context.Context, msg *parser.Message, session 
 		session.SetLocationCode(locationCode)
 	}
 
-	// Short-circuit: if the session already holds a valid (non-expired) token for
-	// this user, skip the FOLIO round-trip entirely.  The per-request AuthClient
-	// created below discards its TokenCache on return, so calling it again when the
-	// token is still good wastes a network call and loses any cache benefit.
-	if session.IsAuth() && !session.IsTokenExpired() {
+	// Short-circuit: if the session already holds a valid (non-expired) token for the
+	// same credentials, skip the FOLIO round-trip entirely. A new login would open a
+	// second Keycloak session for this connection and end the first. Different
+	// credentials (another user, or a wrong password) always go to FOLIO, as does a token
+	// issued by another tenant (this 93 moved the session to a different tenant).
+	if session.IsAuth() && !session.IsTokenExpired() && !session.HasTokensFromOtherTenant() &&
+		sessionCredentialsMatch(session, username, password) {
 		h.logger.Info("Login skipped — session token still valid",
 			zap.String("username", username),
 			zap.String("session_id", session.ID),
@@ -70,52 +73,74 @@ func (h *LoginHandler) Handle(ctx context.Context, msg *parser.Message, session 
 		return h.buildLoginResponse(true, msg.SequenceNumber, session), nil
 	}
 
-	// Create auth client with token cache capacity of 100
-	authClient := folio.NewAuthClient(session.TenantConfig.OkapiURL, session.TenantConfig.OkapiTenant, 100)
+	if session.IsAuth() && !session.IsTokenExpired() {
+		h.logger.Info("Login credentials differ from the authenticated session — authenticating with FOLIO",
+			zap.String("username", username),
+			zap.String("session_username", session.GetUsername()),
+			zap.String("session_id", session.ID),
+		)
+	}
 
-	// Authenticate with FOLIO
+	authClient := folio.NewAuthClient(session.TenantConfig.OkapiURL, session.TenantConfig.OkapiTenant)
+	previousUsername := session.GetUsername()
+
+	// Hold the renewal lock from the login until the new pair is stored, so a concurrent
+	// renewal can't store a pair that this login then replaces without logging it out.
+	session.LockRenewal()
+
+	// Authenticate with FOLIO (/authn/login-with-expiry). Login guarantees both tokens are present.
 	authResp, err := authClient.Login(ctx, username, password)
 	if err != nil {
+		// A failed login normally leaves the session untouched. But if this 93 moved the
+		// session to another tenant, the stored pair belongs to the previous tenant and can't
+		// serve this one: end that Keycloak session and drop the authentication.
+		var replaced types.TokenPair
+		if session.HasTokensFromOtherTenant() {
+			replaced = session.TakeTokens()
+			session.Clear()
+		}
+		session.UnlockRenewal()
+
 		h.logger.Error("Authentication failed",
 			zap.String("username", username),
 			zap.Error(err),
 		)
+		if !replaced.IsEmpty() {
+			h.logger.Warn("Previous tenant's session discarded after failed login",
+				zap.String("session_id", session.ID),
+				zap.String("tenant", session.TenantConfig.Tenant),
+			)
+			h.logoutReplacedTokens(replaced, session.ID, previousUsername, LogoutReasonTenantChanged)
+		}
 		return h.buildLoginResponse(false, msg.SequenceNumber, session), nil
 	}
 
-	// Determine token to use (prefer OkapiToken, fallback to AccessToken)
-	token := authResp.OkapiToken
-	if token == "" {
-		token = authResp.AccessToken
-	}
-
-	if token == "" {
-		h.logger.Error("No token received from FOLIO login",
-			zap.String("username", username),
-			zap.String("session_id", session.ID),
-		)
-		return h.buildLoginResponse(false, msg.SequenceNumber, session), nil
-	}
+	// Store the token pair so renewal can use /authn/refresh before falling back to re-login.
+	// The pair it replaces (if any) belongs to a Keycloak session nothing will use again.
+	replaced := session.SwapTokens(authResp.OkapiToken, authResp.ExpiresAt, authResp.RefreshToken, authResp.RefreshTokenExpiration)
 
 	// Store authentication in session (username, patronID, patronBarcode, token, expiresAt)
 	// For login handler, we don't have patron info yet, so use username for all
-	session.SetAuthenticated(username, "", "", token, authResp.ExpiresAt)
+	session.SetAuthenticated(username, "", "", authResp.OkapiToken, authResp.ExpiresAt)
 
 	// Store credentials for automatic token refresh (Option A - Phase 3)
 	// This enables getAuthenticatedFolioClient() to re-authenticate when token expires
 	session.SetAuthCredentials(password)
+	session.UnlockRenewal()
+
+	// End the replaced pair's Keycloak session in the background; the 94 is not delayed.
+	h.logoutReplacedTokens(replaced, session.ID, previousUsername, LogoutReasonRelogin93)
 
 	// Calculate time until expiration for logging
 	timeUntilExpiry := time.Until(authResp.ExpiresAt)
-	// 90s buffer is used in IsTokenExpired() check
-	effectiveTimeRemaining := timeUntilExpiry - (90 * time.Second)
+	effectiveTimeRemaining := timeUntilExpiry - types.TokenExpiryBuffer
 
 	h.logger.Info("Login successful",
 		zap.String("username", username),
 		zap.String("session_id", session.ID),
 		zap.Bool("token_stored", session.GetAuthToken() != ""),
-		zap.Int("token_length", len(token)),
 		zap.Time("token_expires_at", authResp.ExpiresAt),
+		zap.Time("refresh_expires_at", authResp.RefreshTokenExpiration),
 		zap.Duration("time_until_expiry", timeUntilExpiry),
 		zap.Duration("effective_time_remaining_with_90s_buffer", effectiveTimeRemaining),
 	)
@@ -123,6 +148,16 @@ func (h *LoginHandler) Handle(ctx context.Context, msg *parser.Message, session 
 	h.logResponse(string(parser.LoginResponse), session, nil)
 
 	return h.buildLoginResponse(true, msg.SequenceNumber, session), nil
+}
+
+// sessionCredentialsMatch reports whether username and password match the credentials
+// stored by the session's last successful login. The password comparison is constant-time.
+func sessionCredentialsMatch(session *types.Session, username, password string) bool {
+	storedUsername, storedPassword := session.GetAuthCredentials()
+	if storedPassword == "" || username != storedUsername {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(password), []byte(storedPassword)) == 1
 }
 
 // buildLoginResponse builds a Login Response (94)

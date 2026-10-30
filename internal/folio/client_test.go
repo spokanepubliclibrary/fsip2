@@ -39,52 +39,6 @@ func TestHTTPError_IsNotFound(t *testing.T) {
 	}
 }
 
-func TestHTTPError_IsBadRequest(t *testing.T) {
-	tests := []struct {
-		name       string
-		statusCode int
-		expected   bool
-	}{
-		{"400 is bad request", 400, true},
-		{"200 is not bad request", 200, false},
-		{"404 is not bad request", 404, false},
-		{"500 is not bad request", 500, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := &HTTPError{StatusCode: tt.statusCode}
-			if err.IsBadRequest() != tt.expected {
-				t.Errorf("IsBadRequest() = %v, want %v", err.IsBadRequest(), tt.expected)
-			}
-		})
-	}
-}
-
-func TestHTTPError_IsServerError(t *testing.T) {
-	tests := []struct {
-		name       string
-		statusCode int
-		expected   bool
-	}{
-		{"500 is server error", 500, true},
-		{"503 is server error", 503, true},
-		{"599 is server error", 599, true},
-		{"200 is not server error", 200, false},
-		{"404 is not server error", 404, false},
-		{"400 is not server error", 400, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := &HTTPError{StatusCode: tt.statusCode}
-			if err.IsServerError() != tt.expected {
-				t.Errorf("IsServerError() = %v, want %v", err.IsServerError(), tt.expected)
-			}
-		})
-	}
-}
-
 func TestHTTPError_ParseErrorMessage_EmptyBody(t *testing.T) {
 	err := &HTTPError{StatusCode: 500, Body: ""}
 	msg := err.ParseErrorMessage()
@@ -164,49 +118,6 @@ func TestClient_SetTimeout(t *testing.T) {
 	}
 }
 
-func TestClient_Delete_Success(t *testing.T) {
-	deleteCalled := false
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			deleteCalled = true
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL, "test-tenant")
-	err := client.Delete(context.Background(), "/some/resource/123", "test-token")
-	if err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
-	if !deleteCalled {
-		t.Error("Expected DELETE request to be made")
-	}
-}
-
-func TestClient_Delete_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL, "test-tenant")
-	err := client.Delete(context.Background(), "/some/resource/nonexistent", "test-token")
-	if err == nil {
-		t.Error("Expected error for 404 response")
-	}
-
-	if httpErr, ok := err.(*HTTPError); ok {
-		if !httpErr.IsNotFound() {
-			t.Errorf("Expected IsNotFound to be true, status=%d", httpErr.StatusCode)
-		}
-	}
-}
-
 func TestClient_PostWithTextPlainAccept_Success(t *testing.T) {
 	acceptHeader := ""
 
@@ -244,8 +155,8 @@ func TestClient_PostWithTextPlainAccept_Error(t *testing.T) {
 		t.Error("Expected error for 400 response")
 	}
 	if httpErr, ok := err.(*HTTPError); ok {
-		if !httpErr.IsBadRequest() {
-			t.Errorf("Expected IsBadRequest to be true, status=%d", httpErr.StatusCode)
+		if httpErr.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status %d, got %d", http.StatusBadRequest, httpErr.StatusCode)
 		}
 	}
 }
@@ -435,4 +346,71 @@ func TestSetTimeout_ShorterThanGlobalTimeout(t *testing.T) {
 	if elapsed > 500*time.Millisecond {
 		t.Errorf("request took %v — expected to time out at ~50 ms, not at the 30 s global timeout", elapsed)
 	}
+}
+
+// Tests for PostWithCookies
+
+func TestPostWithCookies_SendsAndReturnsCookies(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie("folioRefreshToken")
+		require.NoError(t, err)
+		assert.Equal(t, "rt-1", c.Value)
+		assert.Equal(t, "test-tenant", r.Header.Get("X-Okapi-Tenant"))
+
+		http.SetCookie(w, &http.Cookie{Name: "folioAccessToken", Value: "at-2", Path: "/"})
+		http.SetCookie(w, &http.Cookie{Name: "folioRefreshToken", Value: "rt-2", Path: "/authn"})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"name":"ok"}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test-tenant")
+	var result struct {
+		Name string `json:"name"`
+	}
+	cookies, err := client.PostWithCookies(context.Background(), "/authn/refresh", "", nil, &result,
+		&http.Cookie{Name: "folioRefreshToken", Value: "rt-1"})
+	require.NoError(t, err)
+	assert.Equal(t, "ok", result.Name)
+
+	got := map[string]string{}
+	for _, c := range cookies {
+		got[c.Name] = c.Value
+	}
+	assert.Equal(t, map[string]string{"folioAccessToken": "at-2", "folioRefreshToken": "rt-2"}, got)
+}
+
+func TestPostWithCookies_EmptyTokenSendsNoOkapiToken(t *testing.T) {
+	var headerPresent bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, headerPresent = r.Header["X-Okapi-Token"]
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test-tenant")
+	_, err := client.PostWithCookies(context.Background(), "/authn/logout", "", nil, nil)
+	require.NoError(t, err)
+	assert.False(t, headerPresent, "an empty token must not send an X-Okapi-Token header")
+}
+
+func TestPostWithCookies_NonSuccessReturnsHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "folioAccessToken", Value: "should-not-be-returned"})
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test-tenant")
+	cookies, err := client.PostWithCookies(context.Background(), "/authn/refresh", "", nil, nil)
+	var httpErr *HTTPError
+	require.True(t, errors.As(err, &httpErr))
+	assert.True(t, httpErr.IsUnauthorized())
+	assert.Nil(t, cookies, "no cookies are returned on error")
+}
+
+func TestSharedHTTPClient_HasNoCookieJar(t *testing.T) {
+	// A jar on the shared client would replay one SIP connection's tokens on another's requests.
+	client := NewClient("http://example.invalid", "test-tenant")
+	assert.Nil(t, client.httpClient.Jar)
 }

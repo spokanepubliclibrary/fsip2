@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,6 +76,9 @@ func NewClient(baseURL, tenant string) *Client {
 // On each request, a context.WithTimeout deadline of this duration is applied,
 // cancelling the request if it does not complete within the allotted time.
 // This does not modify the shared HTTP client; the deadline is enforced via context.
+// No production caller as of plan 02. Retained as the hook for a future per-tenant
+// FOLIO request timeout; the c.timeout branch in the request path (Client.do) is
+// inert until it is called.
 func (c *Client) SetTimeout(timeout time.Duration) {
 	c.timeout = timeout
 }
@@ -88,16 +93,6 @@ func (c *Client) Post(ctx context.Context, path string, token string, body inter
 	return c.doRequest(ctx, "POST", path, token, body, result)
 }
 
-// Put performs a PUT request
-func (c *Client) Put(ctx context.Context, path string, token string, body interface{}, result interface{}) error {
-	return c.doRequest(ctx, "PUT", path, token, body, result)
-}
-
-// Delete performs a DELETE request
-func (c *Client) Delete(ctx context.Context, path string, token string) error {
-	return c.doRequest(ctx, "DELETE", path, token, nil, nil)
-}
-
 // PostWithTextPlainAccept performs a POST request with Accept: text/plain header
 func (c *Client) PostWithTextPlainAccept(ctx context.Context, path string, token string, body interface{}) error {
 	return c.doRequestWithCustomAccept(ctx, "POST", path, token, body, nil, "text/plain")
@@ -108,6 +103,19 @@ func (c *Client) PutWithTextPlainAccept(ctx context.Context, path string, token 
 	return c.doRequestWithCustomAccept(ctx, "PUT", path, token, body, nil, "text/plain")
 }
 
+// PostWithCookies performs a POST request that also sends reqCookies and returns the
+// cookies set by the response (Set-Cookie). Used by the /authn/* endpoints, which
+// carry tokens in folioAccessToken / folioRefreshToken cookies instead of the body.
+//
+// An empty token sends no X-Okapi-Token header. Login, refresh and logout rely on this.
+//
+// The shared HTTP client has no cookie jar, so response cookies are never stored or
+// replayed automatically; the caller owns them. Do not add a jar: the client is shared
+// across every SIP connection, so a jar would leak one session's tokens into another.
+func (c *Client) PostWithCookies(ctx context.Context, path string, token string, body interface{}, result interface{}, reqCookies ...*http.Cookie) ([]*http.Cookie, error) {
+	return c.do(ctx, "POST", path, token, body, result, "application/json", reqCookies)
+}
+
 // doRequest performs an HTTP request with proper headers
 func (c *Client) doRequest(ctx context.Context, method, path, token string, body interface{}, result interface{}) error {
 	return c.doRequestWithCustomAccept(ctx, method, path, token, body, result, "application/json")
@@ -115,6 +123,13 @@ func (c *Client) doRequest(ctx context.Context, method, path, token string, body
 
 // doRequestWithCustomAccept performs an HTTP request with a custom Accept header
 func (c *Client) doRequestWithCustomAccept(ctx context.Context, method, path, token string, body interface{}, result interface{}, acceptHeader string) error {
+	_, err := c.do(ctx, method, path, token, body, result, acceptHeader, nil)
+	return err
+}
+
+// do builds and executes a request and maps non-2xx responses to *HTTPError.
+// It returns the response cookies on success. An empty token sends no X-Okapi-Token.
+func (c *Client) do(ctx context.Context, method, path, token string, body interface{}, result interface{}, acceptHeader string, reqCookies []*http.Cookie) ([]*http.Cookie, error) {
 	url := c.baseURL + path
 
 	// Apply client timeout using context
@@ -129,14 +144,14 @@ func (c *Client) doRequestWithCustomAccept(ctx context.Context, method, path, to
 	if body != nil {
 		jsonData, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("failed to marshal request body: %w", err)
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
 		}
 		bodyReader = bytes.NewBuffer(jsonData)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set required headers
@@ -147,6 +162,10 @@ func (c *Client) doRequestWithCustomAccept(ctx context.Context, method, path, to
 	// Add authentication token if provided
 	if token != "" {
 		req.Header.Set("X-Okapi-Token", token)
+	}
+
+	for _, cookie := range reqCookies {
+		req.AddCookie(cookie)
 	}
 
 	// Log the outbound request (debug only)
@@ -162,14 +181,14 @@ func (c *Client) doRequestWithCustomAccept(ctx context.Context, method, path, to
 	// Perform the request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	// Read response body
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
 	// Check for HTTP errors
@@ -183,13 +202,17 @@ func (c *Client) doRequestWithCustomAccept(ctx context.Context, method, path, to
 				zap.Int("response_bytes", len(respBody)),
 			)
 		}
-		return &HTTPError{
+		httpErr := &HTTPError{
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,
 			Body:       string(respBody),
 			URL:        url,
 			Method:     method,
 		}
+		if resp.StatusCode == http.StatusForbidden {
+			return nil, c.permissionError(method, path, httpErr)
+		}
+		return nil, httpErr
 	}
 
 	// Log the successful response (debug only)
@@ -206,11 +229,92 @@ func (c *Client) doRequestWithCustomAccept(ctx context.Context, method, path, to
 	// Parse response if result is provided (only for JSON responses)
 	if result != nil && len(respBody) > 0 && acceptHeader == "application/json" {
 		if err := json.Unmarshal(respBody, result); err != nil {
-			return fmt.Errorf("failed to parse response: %w", err)
+			return nil, fmt.Errorf("failed to parse response: %w", err)
 		}
 	}
 
-	return nil
+	return resp.Cookies(), nil
+}
+
+// permissionError maps a 403 to a *PermissionError naming what the kiosk user is missing,
+// and logs it. Eureka's gateway answers {"code":"authorization_error","message":"Access Denied"}
+// without naming the capability, so fsip2 names it from the Capabilities table.
+func (c *Client) permissionError(method, path string, httpErr *HTTPError) *PermissionError {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	permErr := &PermissionError{Method: method, Path: path, Err: httpErr}
+	entry, found := LookupCapability(method, path)
+	if found {
+		permErr.OkapiPermission = entry.OkapiPermission
+		permErr.Capability = entry.Capability
+		permErr.Role = entry.Role
+	}
+
+	if c.logger != nil {
+		c.logger.Warn("FOLIO denied access: the kiosk user is missing a permission",
+			logging.TypeField(logging.TypeApplication),
+			zap.String("method", method),
+			zap.String("path", path),
+			zap.String("tenant", c.tenant),
+			zap.Bool("mapped", found),
+			zap.String("okapi_permission", permErr.OkapiPermission),
+			zap.String("eureka_capability", permErr.Capability),
+			zap.String("role", permErr.Role),
+		)
+	}
+	return permErr
+}
+
+// PermissionError is returned for every 403 from FOLIO. Method, Path, OkapiPermission,
+// Capability and Role come from the Capabilities table; they are empty when the endpoint
+// is not in the table. Operation and UserID are optional context set by the caller.
+// It wraps the underlying *HTTPError, so errors.As(err, &*HTTPError) still works.
+type PermissionError struct {
+	Operation       string
+	UserID          string
+	Method          string
+	Path            string
+	OkapiPermission string
+	Capability      string
+	Role            string
+	Err             error
+}
+
+// Error implements the error interface
+func (e *PermissionError) Error() string {
+	var b strings.Builder
+	b.WriteString("permission denied")
+	if e.Operation != "" {
+		fmt.Fprintf(&b, " for %s", e.Operation)
+	}
+	if e.UserID != "" {
+		fmt.Fprintf(&b, " (user: %s)", e.UserID)
+	}
+	if e.Method != "" {
+		fmt.Fprintf(&b, " on %s %s", e.Method, e.Path)
+		if e.Capability != "" {
+			fmt.Fprintf(&b, ": requires Eureka capability %s (Okapi permission %s) from role %q",
+				e.Capability, e.OkapiPermission, e.Role)
+		} else {
+			b.WriteString(": endpoint not in the fsip2 capability table")
+		}
+	}
+	if e.Err != nil {
+		fmt.Fprintf(&b, ": %v", e.Err)
+	}
+	return b.String()
+}
+
+// Unwrap returns the underlying error
+func (e *PermissionError) Unwrap() error {
+	return e.Err
+}
+
+// IsPermissionError checks if an error is, or wraps, a permission error
+func IsPermissionError(err error) bool {
+	var permErr *PermissionError
+	return errors.As(err, &permErr)
 }
 
 // HTTPError represents an HTTP error response
@@ -277,14 +381,4 @@ func (e *HTTPError) IsUnauthorized() bool {
 // IsForbidden checks if the error is a 403 Forbidden
 func (e *HTTPError) IsForbidden() bool {
 	return e.StatusCode == http.StatusForbidden
-}
-
-// IsBadRequest checks if the error is a 400 Bad Request
-func (e *HTTPError) IsBadRequest() bool {
-	return e.StatusCode == http.StatusBadRequest
-}
-
-// IsServerError checks if the error is a 5xx server error
-func (e *HTTPError) IsServerError() bool {
-	return e.StatusCode >= 500 && e.StatusCode < 600
 }

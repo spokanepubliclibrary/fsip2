@@ -12,6 +12,7 @@ tests/fixtures/
 ├── accounts/       # Fee/fine records
 ├── requests/       # Hold/recall/page requests
 ├── responses/      # FOLIO API response examples
+├── reference/      # Holdings, instance, location, material type, service point, patron group
 ├── loader.go       # Fixture loading utilities
 └── README.md       # This file
 ```
@@ -65,6 +66,17 @@ tests/fixtures/
 - **checkin_success.json** - Successful checkin response
 - **patron_info_full.json** - Complete patron information with loans, holds, and fees
 - **item_info_response.json** - Item details with instance and holdings information
+
+### Reference records (`reference/`)
+
+Loaded by the mock FOLIO server (`tests/mocks`) as its default data. The default item (`items/available_item.json`) points at these records, and `service_point.json` is the e2e session's CP (`test-sp-uuid`).
+
+- **holdings.json** - `holdings-001`, the default item's holdings
+- **instance.json** - `instance-001`, title "Test Book Title"
+- **location.json** - `loc-main-stacks`, the default item's effective location
+- **material_type.json** - `mt-001` (Book)
+- **service_point.json** - `test-sp-uuid`
+- **patron_group.json** - `adults`, the default user's patron group
 
 ## Usage
 

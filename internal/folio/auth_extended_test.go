@@ -2,12 +2,10 @@ package folio
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -58,12 +56,7 @@ func TestSetAuthLogger_WithDevelopmentLogger(t *testing.T) {
 // details log entry is emitted at debug level and NOT at info level.
 func TestLogin_TokenExpirationLog_IsDebugNotInfo(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(models.LoginResponse{
-			OkapiToken:  "tok",
-			AccessToken: "tok",
-			ExpiresIn:   600,
-		})
+		writeTokenResponse(w, "tok", "rtok", validExpiryBody())
 	}))
 	defer srv.Close()
 
@@ -72,7 +65,7 @@ func TestLogin_TokenExpirationLog_IsDebugNotInfo(t *testing.T) {
 	SetAuthLogger(zap.New(core))
 	defer SetAuthLogger(nil)
 
-	client := NewAuthClient(srv.URL, "test-tenant", 100)
+	client := NewAuthClient(srv.URL, "test-tenant")
 	_, err := client.Login(context.Background(), "user", "pass")
 	require.NoError(t, err)
 

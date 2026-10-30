@@ -2,6 +2,7 @@ package folio
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"time"
@@ -52,22 +53,14 @@ func (pc *PatronClient) GetUserByID(ctx context.Context, token string, userID st
 	return &user, nil
 }
 
-// GetUserByUsername retrieves a user by username
+// PLACEHOLDER – NOT FOR USE. GetUserByUsername is reserved for the future
+// kiosk-user UUID lookup (request cancel / SIP 15) and always returns
+// ErrNotImplemented without calling FOLIO.
+//   - NOT IN ANY ROLE as a caller (users.collection.get is already in Role A).
+//   - When built: GET /users, quote the username with cqlQuote (plan 04) and
+//     pass a limit.
 func (pc *PatronClient) GetUserByUsername(ctx context.Context, token string, username string) (*models.User, error) {
-	query := fmt.Sprintf("username==%s", username)
-	path := fmt.Sprintf("/users?query=%s", url.QueryEscape(query))
-
-	var users models.UserCollection
-	err := pc.client.Get(ctx, path, token, &users)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
-	}
-
-	if users.TotalRecords == 0 {
-		return nil, fmt.Errorf("user not found with username: %s", username)
-	}
-
-	return &users.Users[0], nil
+	return nil, ErrNotImplemented
 }
 
 // GetManualBlocks retrieves manual blocks for a user
@@ -103,150 +96,6 @@ func (pc *PatronClient) GetAutomatedPatronBlocks(ctx context.Context, token stri
 	return &blocks, nil
 }
 
-// HasBlocks checks if a user has any active blocks
-func (pc *PatronClient) HasBlocks(ctx context.Context, token string, userID string) (bool, error) {
-	// Check manual blocks
-	manualBlocks, err := pc.GetManualBlocks(ctx, token, userID)
-	if err != nil {
-		return false, err
-	}
-
-	if len(manualBlocks.ManualBlocks) > 0 {
-		return true, nil
-	}
-
-	// Check automated blocks
-	automatedBlocks, err := pc.GetAutomatedPatronBlocks(ctx, token, userID)
-	if err != nil {
-		return false, err
-	}
-
-	return len(automatedBlocks.AutomatedPatronBlocks) > 0, nil
-}
-
-// GetBorrowingBlocks checks if user has blocks preventing borrowing
-func (pc *PatronClient) GetBorrowingBlocks(ctx context.Context, token string, userID string) (bool, []string, error) {
-	messages := []string{}
-
-	// Check manual blocks
-	manualBlocks, err := pc.GetManualBlocks(ctx, token, userID)
-	if err != nil {
-		return false, nil, err
-	}
-
-	for _, block := range manualBlocks.ManualBlocks {
-		if block.Borrowing {
-			if block.PatronMessage != "" {
-				messages = append(messages, block.PatronMessage)
-			} else if block.Desc != "" {
-				messages = append(messages, block.Desc)
-			}
-		}
-	}
-
-	// Check automated blocks
-	automatedBlocks, err := pc.GetAutomatedPatronBlocks(ctx, token, userID)
-	if err != nil {
-		return false, nil, err
-	}
-
-	for _, block := range automatedBlocks.AutomatedPatronBlocks {
-		if block.BlockBorrowing {
-			if block.Message != "" {
-				messages = append(messages, block.Message)
-			}
-		}
-	}
-
-	return len(messages) > 0, messages, nil
-}
-
-// GetRenewalsBlocks checks if user has blocks preventing renewals
-func (pc *PatronClient) GetRenewalsBlocks(ctx context.Context, token string, userID string) (bool, []string, error) {
-	messages := []string{}
-
-	// Check manual blocks
-	manualBlocks, err := pc.GetManualBlocks(ctx, token, userID)
-	if err != nil {
-		return false, nil, err
-	}
-
-	for _, block := range manualBlocks.ManualBlocks {
-		if block.Renewals {
-			if block.PatronMessage != "" {
-				messages = append(messages, block.PatronMessage)
-			} else if block.Desc != "" {
-				messages = append(messages, block.Desc)
-			}
-		}
-	}
-
-	// Check automated blocks
-	automatedBlocks, err := pc.GetAutomatedPatronBlocks(ctx, token, userID)
-	if err != nil {
-		return false, nil, err
-	}
-
-	for _, block := range automatedBlocks.AutomatedPatronBlocks {
-		if block.BlockRenewals {
-			if block.Message != "" {
-				messages = append(messages, block.Message)
-			}
-		}
-	}
-
-	return len(messages) > 0, messages, nil
-}
-
-// GetRequestsBlocks checks if user has blocks preventing requests
-func (pc *PatronClient) GetRequestsBlocks(ctx context.Context, token string, userID string) (bool, []string, error) {
-	messages := []string{}
-
-	// Check manual blocks
-	manualBlocks, err := pc.GetManualBlocks(ctx, token, userID)
-	if err != nil {
-		return false, nil, err
-	}
-
-	for _, block := range manualBlocks.ManualBlocks {
-		if block.Requests {
-			if block.PatronMessage != "" {
-				messages = append(messages, block.PatronMessage)
-			} else if block.Desc != "" {
-				messages = append(messages, block.Desc)
-			}
-		}
-	}
-
-	// Check automated blocks
-	automatedBlocks, err := pc.GetAutomatedPatronBlocks(ctx, token, userID)
-	if err != nil {
-		return false, nil, err
-	}
-
-	for _, block := range automatedBlocks.AutomatedPatronBlocks {
-		if block.BlockRequests {
-			if block.Message != "" {
-				messages = append(messages, block.Message)
-			}
-		}
-	}
-
-	return len(messages) > 0, messages, nil
-}
-
-// UpdateUser updates a user
-func (pc *PatronClient) UpdateUser(ctx context.Context, token string, user *models.User) error {
-	path := fmt.Sprintf("/users/%s", user.ID)
-
-	err := pc.client.Put(ctx, path, token, user, nil)
-	if err != nil {
-		return fmt.Errorf("failed to update user: %w", err)
-	}
-
-	return nil
-}
-
 // VerifyPatronPasswordWithLogin verifies patron credentials using /authn/login-with-expiry
 // Used when usePinForPatronVerification is false
 func (pc *PatronClient) VerifyPatronPasswordWithLogin(ctx context.Context, username, password string) (bool, error) {
@@ -255,8 +104,9 @@ func (pc *PatronClient) VerifyPatronPasswordWithLogin(ctx context.Context, usern
 		Password: password,
 	}
 
-	var loginResp models.LoginResponse
-	err := pc.client.Post(ctx, "/authn/login-with-expiry", "", loginReq, &loginResp)
+	// Only the status matters here, so the body (token expirations) is not parsed.
+	// Password verification is supported on Okapi only; Eureka requires PIN verification.
+	err := pc.client.Post(ctx, "/authn/login-with-expiry", "", loginReq, nil)
 	if err != nil {
 		// Check if it's an authentication error (401/422)
 		if httpErr, ok := err.(*HTTPError); ok {
@@ -345,38 +195,18 @@ func (pc *PatronClient) UpdateUserExpiration(ctx context.Context, token string, 
 	// Note: FOLIO's PUT /users/{id} endpoint requires Accept: text/plain
 	err = pc.client.PutWithTextPlainAccept(ctx, path, token, userData)
 	if err != nil {
-		// Check for permission errors
-		if httpErr, ok := err.(*HTTPError); ok {
-			if httpErr.IsForbidden() {
-				return &PermissionError{
-					Operation: "update user expiration",
-					UserID:    userID,
-					Err:       httpErr,
-				}
-			}
+		// A 403 is already a *PermissionError (users_item.edit, role SIP2 Rolling Renewal);
+		// add the operation context
+		var permErr *PermissionError
+		if errors.As(err, &permErr) {
+			permErr.Operation = "update user expiration"
+			permErr.UserID = userID
+			return permErr
 		}
 		return fmt.Errorf("failed to update user expiration: %w", err)
 	}
 
 	return nil
-}
-
-// PermissionError represents a permission-related error
-type PermissionError struct {
-	Operation string
-	UserID    string
-	Err       error
-}
-
-// Error implements the error interface
-func (e *PermissionError) Error() string {
-	return fmt.Sprintf("permission denied for %s (user: %s): %v", e.Operation, e.UserID, e.Err)
-}
-
-// IsPermissionError checks if an error is a permission error
-func IsPermissionError(err error) bool {
-	_, ok := err.(*PermissionError)
-	return ok
 }
 
 // parseExpirationDate parses a FOLIO-formatted date string into time.Time

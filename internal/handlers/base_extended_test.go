@@ -240,14 +240,14 @@ func TestValidateRequiredField_Missing(t *testing.T) {
 	}
 }
 
-// TestRefreshToken_NoCredentials tests refreshToken when no credentials are stored.
-func TestRefreshToken_NoCredentials(t *testing.T) {
+// TestRenewToken_NoCredentials tests renewToken when no refresh token or credentials are stored.
+func TestRenewToken_NoCredentials(t *testing.T) {
 	tc := testutil.NewTenantConfig()
 	h := NewBaseHandler(zap.NewNop(), tc)
 	session := testutil.NewSession(tc)
 	// No credentials set.
 
-	_, err := h.refreshToken(context.Background(), session)
+	_, err := h.renewToken(context.Background(), session)
 	if err == nil {
 		t.Error("Expected error when no credentials stored")
 	}
@@ -256,13 +256,13 @@ func TestRefreshToken_NoCredentials(t *testing.T) {
 	}
 }
 
-// TestRefreshToken_WithCredentials_NoServer tests refreshToken with credentials but no FOLIO server.
-func TestRefreshToken_WithCredentials_NoServer(t *testing.T) {
+// TestRenewToken_WithCredentials_NoServer tests renewToken with credentials but no FOLIO server.
+func TestRenewToken_WithCredentials_NoServer(t *testing.T) {
 	tc := testutil.NewTenantConfig()
 	h := NewBaseHandler(zap.NewNop(), tc)
 	session := testutil.NewSession(tc)
 
-	// Set expired token + credentials to trigger the refresh path.
+	// Set expired token + credentials to trigger the renewal path.
 	expiredAt := time.Now().Add(-10 * time.Minute)
 	session.SetAuthenticated("user", "", "", "old-token", expiredAt)
 	session.SetAuthCredentials("password123")
@@ -270,9 +270,9 @@ func TestRefreshToken_WithCredentials_NoServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_, err := h.refreshToken(ctx, session)
+	_, err := h.renewToken(ctx, session)
 	if err == nil {
-		t.Error("Expected error when FOLIO server unavailable for token refresh")
+		t.Error("Expected error when FOLIO server unavailable for token renewal")
 	}
 }
 

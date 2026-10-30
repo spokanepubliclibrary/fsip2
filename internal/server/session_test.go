@@ -276,46 +276,6 @@ func TestSessionAuthCredentials(t *testing.T) {
 	}
 }
 
-func TestSessionUpdateToken(t *testing.T) {
-	tenantConfig := &config.TenantConfig{
-		Tenant: "test-tenant",
-	}
-
-	session := types.NewSession("test-session", tenantConfig)
-
-	// Set initial authentication
-	initialExpiry := time.Now().Add(5 * time.Minute)
-	session.SetAuthenticated("testuser", "patron-123", "barcode-456", "initial-token", initialExpiry)
-
-	// Verify initial state
-	if session.GetAuthToken() != "initial-token" {
-		t.Errorf("Expected initial token 'initial-token', got %s", session.GetAuthToken())
-	}
-
-	// Update token
-	newExpiry := time.Now().Add(10 * time.Minute)
-	session.UpdateToken("new-token", newExpiry)
-
-	// Verify token was updated
-	if session.GetAuthToken() != "new-token" {
-		t.Errorf("Expected new token 'new-token', got %s", session.GetAuthToken())
-	}
-
-	// Verify expiry was updated
-	tokenExpiry := session.GetTokenExpiresAt()
-	if tokenExpiry.Sub(newExpiry) > time.Second || newExpiry.Sub(tokenExpiry) > time.Second {
-		t.Errorf("Expected token expiry around %v, got %v", newExpiry, tokenExpiry)
-	}
-
-	// Verify other session state is preserved
-	if session.GetUsername() != "testuser" {
-		t.Errorf("Expected username preserved as 'testuser', got %s", session.GetUsername())
-	}
-	if session.GetPatronID() != "patron-123" {
-		t.Errorf("Expected patron ID preserved as 'patron-123', got %s", session.GetPatronID())
-	}
-}
-
 func TestSessionClearClearsCredentials(t *testing.T) {
 	tenantConfig := &config.TenantConfig{
 		Tenant: "test-tenant",
@@ -402,10 +362,10 @@ func TestSessionCredentialsConcurrentAccess(t *testing.T) {
 		done <- true
 	}()
 
-	// Writer 2: Update token
+	// Writer 2: Update token pair
 	go func() {
 		for i := 0; i < 100; i++ {
-			session.UpdateToken("newtoken", time.Now().Add(10*time.Minute))
+			session.UpdateTokens("newtoken", time.Now().Add(10*time.Minute), "newrefresh", time.Now().Add(time.Hour))
 		}
 		done <- true
 	}()

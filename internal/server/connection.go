@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strings"
 	"time"
 
+	"github.com/spokanepubliclibrary/fsip2/internal/handlers"
 	"github.com/spokanepubliclibrary/fsip2/internal/helpers"
 	"github.com/spokanepubliclibrary/fsip2/internal/logging"
 	"github.com/spokanepubliclibrary/fsip2/internal/sip2/builder"
@@ -64,8 +66,8 @@ func NewConnection(
 }
 
 // Handle processes the connection
-func (c *Connection) Handle(ctx context.Context) error {
-	defer c.conn.Close()
+func (c *Connection) Handle(ctx context.Context) (err error) {
+	defer func() { c.closeAndLogout(err) }()
 
 	// Set read timeout
 	if err := c.conn.SetReadDeadline(time.Now().Add(5 * time.Minute)); err != nil {
@@ -114,6 +116,33 @@ func (c *Connection) Handle(ctx context.Context) error {
 				return fmt.Errorf("failed to reset read deadline: %w", err)
 			}
 		}
+	}
+}
+
+// closeAndLogout closes the socket first, so the device is never held up, then ends the
+// connection's Keycloak session. No renewal lock is needed: the read loop has exited, so no
+// handler is running on this session. A process exit does not run this (no logout on shutdown).
+func (c *Connection) closeAndLogout(handleErr error) {
+	c.conn.Close()
+	if c.server == nil || c.server.sessionLogout == nil {
+		return
+	}
+	c.server.sessionLogout(c.session, closeReason(handleErr))
+}
+
+// closeReason maps how Handle returned to the logout reason that is logged.
+func closeReason(err error) string {
+	var netErr net.Error
+	switch {
+	case err == nil:
+		return handlers.LogoutReasonClientClosed
+	// Context errors first: context.DeadlineExceeded also reports Timeout() as a net.Error.
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return handlers.LogoutReasonContextCancelled
+	case errors.As(err, &netErr) && netErr.Timeout():
+		return handlers.LogoutReasonReadTimeout
+	default:
+		return handlers.LogoutReasonError
 	}
 }
 
@@ -258,8 +287,11 @@ func (c *Connection) processMessage(ctx context.Context, rawMessage string) (str
 	messageType := string(msg.Code)
 	tenant := c.session.TenantConfig.Tenant
 
+	// Suppress routine logging for client heartbeats unless the tenant log level is Debugging
+	msgLogger := logging.ScopedLogger(c.server.logger, messageType, c.session.TenantConfig.LogLevel)
+
 	// Log handler invocation
-	c.server.logger.Info("Invoking message handler",
+	msgLogger.Info("Invoking message handler",
 		logging.TypeField(logging.TypeApplication),
 		zap.String("message_code", string(msg.Code)),
 		zap.String("tenant", tenant),
@@ -288,7 +320,7 @@ func (c *Connection) processMessage(ctx context.Context, rawMessage string) (str
 	}
 
 	// Log successful handler response
-	c.server.logger.Info("Handler generated response",
+	msgLogger.Info("Handler generated response",
 		logging.TypeField(logging.TypeApplication),
 		zap.String("message_code", string(msg.Code)),
 		zap.String("tenant", tenant),
@@ -348,8 +380,11 @@ func (c *Connection) sendMessage(message string) error {
 	}
 	messageBytes := []byte(message)
 
+	// Suppress routine logging for client heartbeats unless the tenant log level is Debugging
+	msgLogger := logging.ScopedLogger(c.server.logger, messageCode, logLevel)
+
 	// Log response format details
-	c.server.logger.Debug("Sending response to client",
+	msgLogger.Debug("Sending response to client",
 		logging.TypeField(logging.TypeApplication),
 		zap.Int("message_length", len(message)),
 		zap.Int("bytes_length", len(messageBytes)),
@@ -367,7 +402,7 @@ func (c *Connection) sendMessage(message string) error {
 		return fmt.Errorf("failed to write message: %w", err)
 	}
 
-	c.server.logger.Debug("Response sent successfully",
+	msgLogger.Debug("Response sent successfully",
 		logging.TypeField(logging.TypeApplication),
 		zap.Int("bytes_written", len(messageBytes)),
 		zap.String("session_id", c.session.ID))

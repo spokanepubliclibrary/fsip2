@@ -88,6 +88,10 @@ func run(configFile string, logFile string) error {
 		zap.String("okapi_url", cfg.OkapiURL),
 	)
 
+	for _, warning := range cfg.DeprecationWarnings() {
+		logger.Warn(warning, logging.TypeField(logging.TypeApplication))
+	}
+
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
