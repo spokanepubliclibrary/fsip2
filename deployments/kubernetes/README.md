@@ -18,7 +18,8 @@ The deployment includes:
 - kubectl configured to access your cluster
 - Docker image `fsip2:1.0.0` available (push to registry or use local)
 - (Optional) Kustomize for advanced customization
-- FOLIO Okapi instance accessible from the cluster
+- FOLIO (Okapi Poppy+ or the Eureka/Kong gateway) accessible from the cluster
+- Each kiosk's FOLIO user granted the fsip2 permissions or roles: see [documentation/eureka_capabilities.md](../../documentation/eureka_capabilities.md)
 
 ## Quick Start
 
@@ -38,7 +39,7 @@ docker push your-registry.com/fsip2:1.0.0
 ### 2. Update Configuration
 
 Edit `configmap.yaml` to configure:
-- `okapiUrl`: Your FOLIO Okapi URL
+- `okapiUrl`: Your FOLIO Okapi URL, or the Kong gateway URL on Eureka
 - `tenants`: Your tenant configurations
 - Other application settings
 

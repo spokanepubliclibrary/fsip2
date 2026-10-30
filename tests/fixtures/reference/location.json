@@ -1,0 +1,10 @@
+{
+  "id": "loc-main-stacks",
+  "name": "Main Library - Stacks",
+  "code": "MAIN-STACKS",
+  "isActive": true,
+  "institutionId": "inst-001",
+  "campusId": "campus-001",
+  "libraryId": "lib-001",
+  "primaryServicePoint": "test-sp-uuid"
+}

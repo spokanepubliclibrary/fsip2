@@ -7,7 +7,7 @@
 #
 # Prerequisites:
 #   - Ensure basic.yaml and tenant-config.yaml are in this directory
-#   - Update okapiUrl in basic.yaml to point to your FOLIO instance
+#   - Update okapiUrl in basic.yaml to your FOLIO Okapi URL, or the Kong gateway URL on Eureka
 #   - Update tenant settings in tenant-config.yaml
 
 version: '3.8'

@@ -51,7 +51,7 @@ FSIP2 is a bridge application that connects self-service library kiosks with the
 - ✅ Renew All (65/66)
 - ✅ End Patron Session (35/36)
 - ✅ Fee Paid (37/38)
-- ⚠️ Item Status Update (19/20) - Planned/Partial
+- ⚠️ Item Status Update (19/20) - Planned/Partial: it currently replies ok = 1 **without changing anything in FOLIO**. Don't rely on it
 - ✅ Login (93/94)
 - ✅ SC/ACS Status (99/98)
 - ✅ Resend (97/96)
@@ -97,39 +97,65 @@ See See [documentation/field_mapping.md](documentation/field_mapping.md) for com
 
 
 #### Permissions
-All permission required for fsip2:
+Grant these to each kiosk's FOLIO user (the 93 Login CN/CO account). On **Eureka** they are capabilities in two roles, **`SIP2 Service`** (required) and **`SIP2 Rolling Renewal`** (optional, assigned in addition). On **Okapi** grant the Okapi permissions. The exact POSTs to create and assign the roles, verification queries and 403 troubleshooting are in [documentation/eureka_capabilities.md](documentation/eureka_capabilities.md).
 
-```
-			"accounts.collection.get",
-			"accounts.item.get",
-			"accounts.pay.post",
-			"automated-patron-blocks.collection.get",
-			"circulation.check-in-by-barcode.post",
-			"circulation.check-out-by-barcode.post",
-			"circulation.loans.collection.get",
-			"circulation.renew-by-barcode.post",
-			"circulation.renew-by-id.post",
-			"circulation.requests.collection.get",
-			"configuration.entries.collection.get",
-			"configuration.entries.item.get",
-			"feefines.collection.get",
-			"inventory.instances.item.get",
-			"inventory.items.collection.get",
-			"inventory.items.item.get",
-			"inventory-storage.holdings.item.get",
-			"inventory-storage.service-points.item.get",
-			"manualblocks.collection.get",
-			"manualblocks.item.get",
-			"patron-pin.validate",
-			"search.instances.collection.get",
-			"usergroups.collection.get",
-			"usergroups.collection.get",
-			"usergroups.item.get",
-			"users.collection.get",
-			"users.item.get",
-			"users-bl.item.get",
-				"users.item.put" (optional, see rollingRenewals feature for details)
-```
+**Required: called by fsip2** (role `SIP2 Service`)
+<!-- fsip2-capabilities:service-direct -->
+| Okapi permission | Eureka capability |
+|---|---|
+| `circulation.check-out-by-barcode.post` | `circulation_check-out-by-barcode.execute` |
+| `circulation.check-in-by-barcode.post` | `circulation_check-in-by-barcode.execute` |
+| `circulation.renew-by-barcode.post` | `circulation_renew-by-barcode.execute` |
+| `circulation.renew-by-id.post` | `circulation_renew-by-id.execute` |
+| `circulation.loans.collection.get` | `circulation_loans_collection.view` |
+| `circulation.requests.collection.get` | `circulation_requests_collection.view` |
+| `accounts.collection.get` | `accounts_collection.view` |
+| `accounts.pay.post` ¹ / `feesfines.accounts.pay.post` | `feesfines_accounts_pay.execute` |
+| `feesfines.accounts-bulk.pay.post` | `feesfines_accounts-bulk_pay.execute` |
+| `manualblocks.collection.get` | `manualblocks_collection.view` |
+| `automated-patron-blocks.collection.get` ¹ / `patron-blocks.automated-patron-blocks.collection.get` | `patron-blocks_automated-patron-blocks_collection.view` |
+| `inventory.items.collection.get` | `inventory_items_collection.view` |
+| `inventory.items.item.get` | `inventory_items_item.view` |
+| `inventory.instances.item.get` | `inventory_instances_item.view` |
+| `inventory-storage.holdings.item.get` | `inventory-storage_holdings_item.view` |
+| `inventory-storage.locations.item.get` | `inventory-storage_locations_item.view` |
+| `inventory-storage.material-types.item.get` | `inventory-storage_material-types_item.view` |
+| `inventory-storage.service-points.item.get` | `inventory-storage_service-points_item.view` |
+| `users.collection.get` | `users_collection.view` |
+| `users.item.get` | `users_item.view` |
+| `usergroups.item.get` | `usergroups_item.view` |
+| `patron-pin.validate` | `patron-pin_validate.execute` |
+<!-- /fsip2-capabilities -->
+
+¹ On **Okapi**, grant `accounts.pay.post` and `automated-patron-blocks.collection.get`; these are the names verified on Okapi. The second name in each row is the one in the Trillium module descriptors, which the Eureka capability is derived from.
+
+**Required: used internally by FOLIO modules** (role `SIP2 Service`; kept as a precaution)
+<!-- fsip2-capabilities:service-transitive -->
+| Okapi permission | Eureka capability |
+|---|---|
+| `manualblocks.item.get` | `manualblocks_item.view` |
+| `usergroups.collection.get` | `usergroups_collection.view` |
+| `feefines.collection.get` | `feefines_collection.view` |
+| `configuration.entries.collection.get` | `configuration_entries_collection.view` |
+| `configuration.entries.item.get` | `configuration_entries_item.view` |
+| `accounts.item.get` | `accounts_item.view` |
+| `users-bl.item.get` | `users-bl_item.view` |
+| `search.instances.collection.get` | `search_instances_collection.view` |
+<!-- /fsip2-capabilities -->
+
+**Optional: Rolling Renewal** (role `SIP2 Rolling Renewal`; only where `rollingRenewals` is enabled)
+<!-- fsip2-capabilities:rolling-renewal -->
+| Okapi permission | Eureka capability |
+|---|---|
+| `users.item.get` | `users_item.view` |
+| `users.item.put` | `users_item.edit` |
+<!-- /fsip2-capabilities -->
+
+On a 403, fsip2 logs `FOLIO denied access` (WARN) with the missing Okapi permission, Eureka capability and role.
+
+#### Eureka
+- Point `okapiUrl` at the Kong gateway URL. The key names (`okapiUrl`, `okapiTenant`) are unchanged.
+- **⚠ Patron verification is PIN only on Eureka.** If `patronPasswordVerificationRequired: true`, set `usePinForPatronVerification: true`. Password mode (`usePinForPatronVerification: false`) fails on Eureka. The key has **no default**, so omitting it selects password mode. See [documentation/eureka_capabilities.md](documentation/eureka_capabilities.md#patron-verification-pin-only-on-eureka).
 
 ### Monitoring
 - Prometheus metrics

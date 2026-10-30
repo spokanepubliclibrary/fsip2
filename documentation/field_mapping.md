@@ -17,8 +17,40 @@ This document provides a comprehensive reference for all supported SIP2 messages
 - [Message 93/94 - Login](#message-9394---login)
 - [Message 97/96 - Request Resend](#message-9796---request-resend)
 - [Message 99/98 - SC/ACS Status](#message-9998---scacs-status)
+- [FOLIO Permissions by Message](#folio-permissions-by-message)
 - [Data Sanitization](#data-sanitization)
 - [Log Field Reference](#log-field-reference)
+
+---
+
+## FOLIO Permissions by Message
+
+What each message needs from the kiosk user, and which response fields depend on it. Capabilities are listed by their Eureka name; the Okapi permission for each is in [eureka_capabilities.md](eureka_capabilities.md), which also has the full role definitions. Everything here is in role **`SIP2 Service`** unless marked **(Rolling Renewal)**. If a capability is missing, FOLIO returns 403 and fsip2 logs `FOLIO denied access` (WARN) naming it.
+
+Shorthand used in the table:
+- **Item lookup** (by barcode) is two calls: `inventory_items_collection.view` (the barcode query) and `inventory_items_item.view` (the item by ID).
+- **Patron lookup** is `users_collection.view`. It is skipped when the session already holds the patron's ID.
+- **PIN check** is `patron-pin_validate.execute`, used when `patronPasswordVerificationRequired` is on (PIN mode) and the message carries AD.
+- *Conditional* calls happen only in the situation named.
+
+| Message | Capabilities | Fields that depend on them |
+|---|---|---|
+| 09 Checkin | `circulation_check-in-by-barcode.execute`, item lookup, `inventory-storage_holdings_item.view`, `inventory_instances_item.view`, `circulation_requests_collection.view`. *Conditional:* `inventory-storage_locations_item.view` (location not embedded in the item), `inventory-storage_material-types_item.view` (material type not embedded), `inventory-storage_service-points_item.view` (hold pickup point or in-transit destination), `users_item.view` (preferred first name enabled for DA) | AJ (holdings → instance), AQ (locations), CH (material types), CT (service points), CV/CY/DA hold alert and requester (requests, users) |
+| 11 Checkout | `circulation_check-out-by-barcode.execute`, item lookup, `inventory-storage_holdings_item.view`, `inventory_instances_item.view`; patron lookup; PIN check | AJ (holdings → instance) |
+| 17 Item Information | Item lookup, `inventory-storage_holdings_item.view`, `inventory_instances_item.view`, `circulation_requests_collection.view`. *Conditional:* `circulation_loans_collection.view` (item checked out and AH enabled), `inventory-storage_service-points_item.view` (in transit), `users_item.view` (preferred first name enabled for DA) | AJ (instance), AH due date (loans), CF hold queue (requests), CT (service points) |
+| 19 Item Status Update | Item lookup | none: it only looks the item up (see [Message 19](#message-19---item-status-update)) |
+| 23 Patron Status | Patron lookup, `manualblocks_collection.view`, `patron-blocks_automated-patron-blocks_collection.view`, `accounts_collection.view`; PIN check. *Rolling renewal:* `users_item.view` + `users_item.edit` **(Rolling Renewal)** | patron status flags (blocks), BV (accounts), CQ (PIN) |
+| 29 Renew | `circulation_renew-by-barcode.execute`, `inventory_items_item.view`, `inventory-storage_holdings_item.view`, `inventory_instances_item.view`; patron lookup; PIN check | AJ (item → holdings → instance) |
+| 35 End Patron Session | none | |
+| 37 Fee Paid | `accounts_collection.view`, `feesfines_accounts_pay.execute` (single, CG given) or `feesfines_accounts-bulk_pay.execute` (bulk); patron lookup; PIN check | payment result (accounts) |
+| 63 Patron Information | Patron lookup, `manualblocks_collection.view`, `patron-blocks_automated-patron-blocks_collection.view`, `accounts_collection.view`, `circulation_loans_collection.view`, `inventory_items_item.view`, `circulation_requests_collection.view`, `usergroups_item.view`; PIN check. *Rolling renewal:* `users_item.view` + `users_item.edit` **(Rolling Renewal)** | patron status flags (blocks), BV/AV (accounts), AU/AT (loans → items), AS/CD (requests), patron-group fields (groups), CQ (PIN) |
+| 65 Renew All | `circulation_loans_collection.view`, `circulation_renew-by-id.execute`, `inventory_items_item.view`; patron lookup; PIN check | renewed/unrenewed counts (loans → items) |
+| 93 Login | none (`/authn/login-with-expiry` is public) | |
+| 97, 99 | none | |
+
+The unconditional calls were checked against the calls fsip2 made for each message in an e2e run. The conditional ones are taken from the handler code.
+
+FOLIO modules also use the eight "used internally" capabilities of `SIP2 Service` while serving these calls (for example mod-circulation during check-out, check-in and renew). See [eureka_capabilities.md](eureka_capabilities.md#used-internally-by-folio-modules).
 
 ---
 
@@ -528,15 +560,15 @@ Truncation preserves UTF-8 multibyte characters correctly.
 
 | Field | Code | Required | Description | FOLIO Source |
 |-------|------|----------|-------------|--------------|
-| Item Properties OK | Fixed | Yes | Properties updated (Y/N) | Not implemented - always N |
+| Item Properties OK | Fixed | Yes | Properties updated (0/1) | `1` if the item barcode exists in FOLIO, `0` otherwise. **Nothing is changed** |
 | Transaction Date | Fixed | Yes | Date/time of transaction | Current timestamp |
 | Institution ID | AO | Yes | Institution identifier | Request echo |
 | Item Identifier | AB | Yes | Item barcode | Request echo |
-| Title Identifier | AJ | No | Instance title | Not implemented |
+| Title Identifier | AJ | No | Instance title | Item barcode (title not looked up) |
 | Item Properties | CH | No | Item properties | Not implemented |
-| Screen Message | AF | No | Messages for display | "Item status update not supported" |
+| Screen Message | AF | No | Messages for display | "Item properties updated" (`1`) or "Item properties update failed" (`0`) |
 
-**Note**: Item Status Update is not currently implemented and always returns failure.
+**⚠ Warning:** Item Status Update is not implemented. fsip2 only looks the item up (`inventory_items_collection.view`); it **does not change the item in FOLIO**, yet it replies ok = `1` and "Item properties updated" for any existing item. Don't rely on it. Setting an item status will need the `inventory_items_item_mark-<status>.execute` capabilities, which no fsip2 role grants yet.
 
 ---
 
@@ -850,7 +882,7 @@ patronCustomFields:
 
 | Field | Code | Required | Description | FOLIO Source |
 |-------|------|----------|-------------|--------------|
-| OK | Fixed | Yes | Overall success (Y/N) | All renewals successful |
+| OK | Fixed | Yes | Overall success. fsip2 currently sends `Y`/`N`; the SIP2 specification defines `0`/`1` for this field | All renewals successful |
 | Renewed Count | Fixed | Yes | Number of renewed items (4 digits) | Count of successful renewals |
 | Unrenewed Count | Fixed | Yes | Number of unrenewed items (4 digits) | Count of failed renewals |
 | Transaction Date | Fixed | Yes | Date/time of transaction | Current timestamp |
@@ -1053,6 +1085,10 @@ usePinForPatronVerification: true        # Use PIN instead of password
 ```
 
 Controls whether AD field (Patron Password) is verified for patron operations.
+
+PIN verification calls `POST /patron-pin/verify` (`patron-pin_validate.execute`). Password verification logs the patron in with `/authn/login-with-expiry`.
+
+> **⚠ Eureka: PIN only.** Password mode (`usePinForPatronVerification: false`) fails on Eureka, so every patron password is rejected. With `patronPasswordVerificationRequired: true`, set `usePinForPatronVerification: true`. The key has **no default**: omitting it selects password mode. Password mode works on Okapi only. See [eureka_capabilities.md](eureka_capabilities.md#patron-verification-pin-only-on-eureka).
 
 ### Multi-Tenancy
 
