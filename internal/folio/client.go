@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -200,13 +202,17 @@ func (c *Client) do(ctx context.Context, method, path, token string, body interf
 				zap.Int("response_bytes", len(respBody)),
 			)
 		}
-		return nil, &HTTPError{
+		httpErr := &HTTPError{
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,
 			Body:       string(respBody),
 			URL:        url,
 			Method:     method,
 		}
+		if resp.StatusCode == http.StatusForbidden {
+			return nil, c.permissionError(method, path, httpErr)
+		}
+		return nil, httpErr
 	}
 
 	// Log the successful response (debug only)
@@ -228,6 +234,87 @@ func (c *Client) do(ctx context.Context, method, path, token string, body interf
 	}
 
 	return resp.Cookies(), nil
+}
+
+// permissionError maps a 403 to a *PermissionError naming what the kiosk user is missing,
+// and logs it. Eureka's gateway answers {"code":"authorization_error","message":"Access Denied"}
+// without naming the capability, so fsip2 names it from the Capabilities table.
+func (c *Client) permissionError(method, path string, httpErr *HTTPError) *PermissionError {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	permErr := &PermissionError{Method: method, Path: path, Err: httpErr}
+	entry, found := LookupCapability(method, path)
+	if found {
+		permErr.OkapiPermission = entry.OkapiPermission
+		permErr.Capability = entry.Capability
+		permErr.Role = entry.Role
+	}
+
+	if c.logger != nil {
+		c.logger.Warn("FOLIO denied access: the kiosk user is missing a permission",
+			logging.TypeField(logging.TypeApplication),
+			zap.String("method", method),
+			zap.String("path", path),
+			zap.String("tenant", c.tenant),
+			zap.Bool("mapped", found),
+			zap.String("okapi_permission", permErr.OkapiPermission),
+			zap.String("eureka_capability", permErr.Capability),
+			zap.String("role", permErr.Role),
+		)
+	}
+	return permErr
+}
+
+// PermissionError is returned for every 403 from FOLIO. Method, Path, OkapiPermission,
+// Capability and Role come from the Capabilities table; they are empty when the endpoint
+// is not in the table. Operation and UserID are optional context set by the caller.
+// It wraps the underlying *HTTPError, so errors.As(err, &*HTTPError) still works.
+type PermissionError struct {
+	Operation       string
+	UserID          string
+	Method          string
+	Path            string
+	OkapiPermission string
+	Capability      string
+	Role            string
+	Err             error
+}
+
+// Error implements the error interface
+func (e *PermissionError) Error() string {
+	var b strings.Builder
+	b.WriteString("permission denied")
+	if e.Operation != "" {
+		fmt.Fprintf(&b, " for %s", e.Operation)
+	}
+	if e.UserID != "" {
+		fmt.Fprintf(&b, " (user: %s)", e.UserID)
+	}
+	if e.Method != "" {
+		fmt.Fprintf(&b, " on %s %s", e.Method, e.Path)
+		if e.Capability != "" {
+			fmt.Fprintf(&b, ": requires Eureka capability %s (Okapi permission %s) from role %q",
+				e.Capability, e.OkapiPermission, e.Role)
+		} else {
+			b.WriteString(": endpoint not in the fsip2 capability table")
+		}
+	}
+	if e.Err != nil {
+		fmt.Fprintf(&b, ": %v", e.Err)
+	}
+	return b.String()
+}
+
+// Unwrap returns the underlying error
+func (e *PermissionError) Unwrap() error {
+	return e.Err
+}
+
+// IsPermissionError checks if an error is, or wraps, a permission error
+func IsPermissionError(err error) bool {
+	var permErr *PermissionError
+	return errors.As(err, &permErr)
 }
 
 // HTTPError represents an HTTP error response

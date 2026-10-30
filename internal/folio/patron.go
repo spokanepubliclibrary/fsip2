@@ -2,6 +2,7 @@ package folio
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"time"
@@ -194,38 +195,18 @@ func (pc *PatronClient) UpdateUserExpiration(ctx context.Context, token string, 
 	// Note: FOLIO's PUT /users/{id} endpoint requires Accept: text/plain
 	err = pc.client.PutWithTextPlainAccept(ctx, path, token, userData)
 	if err != nil {
-		// Check for permission errors
-		if httpErr, ok := err.(*HTTPError); ok {
-			if httpErr.IsForbidden() {
-				return &PermissionError{
-					Operation: "update user expiration",
-					UserID:    userID,
-					Err:       httpErr,
-				}
-			}
+		// A 403 is already a *PermissionError (users_item.edit, role SIP2 Rolling Renewal);
+		// add the operation context
+		var permErr *PermissionError
+		if errors.As(err, &permErr) {
+			permErr.Operation = "update user expiration"
+			permErr.UserID = userID
+			return permErr
 		}
 		return fmt.Errorf("failed to update user expiration: %w", err)
 	}
 
 	return nil
-}
-
-// PermissionError represents a permission-related error
-type PermissionError struct {
-	Operation string
-	UserID    string
-	Err       error
-}
-
-// Error implements the error interface
-func (e *PermissionError) Error() string {
-	return fmt.Sprintf("permission denied for %s (user: %s): %v", e.Operation, e.UserID, e.Err)
-}
-
-// IsPermissionError checks if an error is a permission error
-func IsPermissionError(err error) bool {
-	_, ok := err.(*PermissionError)
-	return ok
 }
 
 // parseExpirationDate parses a FOLIO-formatted date string into time.Time

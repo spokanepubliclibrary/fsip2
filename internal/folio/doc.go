@@ -54,9 +54,20 @@
 //   - IsNotFound(): Checks for 404 errors
 //   - IsUnauthorized(): Checks for 401 errors
 //   - IsForbidden(): Checks for 403 errors
-//   - IsPermissionError(err): Package function; checks for permission-related errors
+//   - PermissionError: returned for every 403. It names the Okapi permission, Eureka
+//     capability and fsip2 role the endpoint needs (looked up in Capabilities), wraps the
+//     *HTTPError, and is logged at WARN. Eureka's own 403 names no capability.
+//   - IsPermissionError(err): Package function; true if err is or wraps a PermissionError
 //
 // FOLIO error responses are parsed and included in the error message.
+//
+// # Capabilities
+//
+// capabilities.go holds the single table of every FOLIO endpoint fsip2 calls, with its
+// Okapi permission, Eureka capability and role (SIP2 Service, SIP2 Rolling Renewal), plus
+// the permissions FOLIO modules use internally and the placeholders' future needs. The
+// README, documentation/eureka_capabilities.md and the mock server's enforcement mode are
+// tested against it. Add a row whenever a new FOLIO call is added.
 //
 // # Context Support
 //
@@ -69,7 +80,8 @@
 // # Request/Response Flow
 //
 //  1. Client creates HTTP request with context
-//  2. Sets required Okapi headers (x-okapi-tenant, x-okapi-token, x-okapi-url)
+//  2. Sets the X-Okapi-Tenant and X-Okapi-Token headers (the same names on Okapi and on
+//     the Eureka/Kong gateway)
 //  3. Marshals request body to JSON (if applicable)
 //  4. Sends request via shared HTTP client
 //  5. Reads response body

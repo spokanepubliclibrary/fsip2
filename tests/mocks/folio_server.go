@@ -75,6 +75,20 @@ type FolioMockServer struct {
 	RefreshStatus        int                                     // When non-zero, /authn/refresh answers with this status (e.g. 503)
 	BulkPayCallCount     int                                     // Number of POST /accounts-bulk/pay calls received
 	BulkPayRequests      []models.Payment                        // All bulk payment request bodies received
+	Requests             map[string]*models.Request              // requestID -> request
+	Groups               map[string]*models.PatronGroup          // id -> patron group
+	Locations            map[string]*models.Location             // id -> location
+	MaterialTypes        map[string]*models.MaterialType         // id -> material type
+	ServicePoints        map[string]*models.ServicePoint         // id -> service point
+	UserPutCount         int                                     // Number of successful PUT /users/{id} calls
+
+	// Capability enforcement (Eureka emulation). Off by default. When on, every protected
+	// request must carry a token whose user holds the endpoint's capability, looked up in
+	// folio.Capabilities; otherwise the gateway's 403 is returned. Unmapped endpoints are
+	// denied too, so a new FOLIO call without a capability-table row fails the tests.
+	enforceCapabilities bool
+	userCapabilities    map[string]map[string]bool // username -> capability set
+	capabilityDenials   []string                   // "METHOD /path -> capability" for each 403
 }
 
 // NewFolioMockServer creates a new mock FOLIO server
@@ -94,6 +108,11 @@ func NewFolioMockServer() *FolioMockServer {
 		refreshEntries:  make(map[string]*refreshEntry),
 		issuedAccess:    make(map[string]*tokenEntry),
 		issuedRefresh:   make(map[string]int),
+		Requests:        make(map[string]*models.Request),
+		Groups:          make(map[string]*models.PatronGroup),
+		Locations:       make(map[string]*models.Location),
+		MaterialTypes:   make(map[string]*models.MaterialType),
+		ServicePoints:   make(map[string]*models.ServicePoint),
 	}
 
 	// Create test server
@@ -133,10 +152,26 @@ func (m *FolioMockServer) handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !m.authorizeCapability(w, r, token) {
+		return
+	}
+
 	// Route requests
 	switch {
+	case strings.HasPrefix(r.URL.Path, "/users/"):
+		m.handleUserByID(w, r)
 	case strings.HasPrefix(r.URL.Path, "/users"):
 		m.handleUsers(w, r)
+	case strings.HasPrefix(r.URL.Path, "/circulation/requests"):
+		m.handleRequests(w, r)
+	case strings.HasPrefix(r.URL.Path, "/groups/"):
+		serveByID(w, r, m.Groups)
+	case strings.HasPrefix(r.URL.Path, "/locations/"):
+		serveByID(w, r, m.Locations)
+	case strings.HasPrefix(r.URL.Path, "/material-types/"):
+		serveByID(w, r, m.MaterialTypes)
+	case strings.HasPrefix(r.URL.Path, "/service-points/"):
+		serveByID(w, r, m.ServicePoints)
 	case strings.HasPrefix(r.URL.Path, "/circulation/check-out"):
 		m.handleCheckout(w, r)
 	case strings.HasPrefix(r.URL.Path, "/circulation/check-in"):
@@ -540,6 +575,8 @@ func (m *FolioMockServer) handleRenew(w http.ResponseWriter, r *http.Request) {
 	var renewReq struct {
 		ItemBarcode string `json:"itemBarcode"`
 		UserBarcode string `json:"userBarcode"`
+		ItemID      string `json:"itemId"` // renew-by-id
+		UserID      string `json:"userId"` // renew-by-id
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&renewReq); err != nil {
@@ -547,13 +584,17 @@ func (m *FolioMockServer) handleRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return renewed loan
+	// Return renewed loan (renew-by-barcode keeps the barcode as ItemID, as before)
+	itemID, userID := renewReq.ItemBarcode, renewReq.UserBarcode
+	if renewReq.ItemID != "" {
+		itemID, userID = renewReq.ItemID, renewReq.UserID
+	}
 	now := time.Now()
 	dueDate := now.Add(14 * 24 * time.Hour)
 	loan := &models.Loan{
 		ID:           fmt.Sprintf("loan-%d", time.Now().UnixNano()),
-		ItemID:       renewReq.ItemBarcode,
-		UserID:       renewReq.UserBarcode,
+		ItemID:       itemID,
+		UserID:       userID,
 		DueDate:      &dueDate,
 		RenewalCount: 1,
 		Status: models.LoanStatus{
@@ -565,8 +606,21 @@ func (m *FolioMockServer) handleRenew(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(loan)
 }
 
-// handleItems handles item queries
+// handleItems handles item queries (GET /inventory/items?query=barcode==X) and
+// GET /inventory/items/{id}
 func (m *FolioMockServer) handleItems(w http.ResponseWriter, r *http.Request) {
+	if id := strings.TrimPrefix(r.URL.Path, "/inventory/items/"); id != r.URL.Path && id != "" {
+		for _, item := range m.Items {
+			if item.ID == id {
+				json.NewEncoder(w).Encode(item)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "item not found"})
+		return
+	}
+
 	query := r.URL.Query().Get("query")
 
 	// Extract barcode from query
@@ -603,11 +657,14 @@ func (m *FolioMockServer) handleItems(w http.ResponseWriter, r *http.Request) {
 func (m *FolioMockServer) handleLoans(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("query")
 
+	// The ID runs to the next space: fsip2 sends "userId==X and status.name==Open"
 	var userID string
 	if strings.Contains(query, "userId==") {
 		parts := strings.Split(query, "userId==")
 		if len(parts) > 1 {
-			userID = strings.Trim(parts[1], "\"")
+			if fields := strings.Fields(parts[1]); len(fields) > 0 {
+				userID = strings.Trim(fields[0], "\"")
+			}
 		}
 	}
 
@@ -781,9 +838,32 @@ func (m *FolioMockServer) addDefaultTestData() {
 		m.AddItem(item.Barcode, &item)
 	}
 
-	// Holdings and instances remain hard-coded (no fixture files for these yet).
-	m.Holdings["holdings-001"] = &models.Holdings{ID: "holdings-001", InstanceID: "instance-001"}
-	m.Instances["instance-001"] = &models.Instance{ID: "instance-001", Title: "Test Book Title"}
+	// Reference records the default item and session point at (holdings, instance,
+	// location, material type, service point test-sp-uuid, patron group "adults").
+	var holdings models.Holdings
+	if err := fixtures.LoadFixtureAs("reference/holdings.json", &holdings); err == nil {
+		m.AddHoldings(holdings.ID, &holdings)
+	}
+	var instance models.Instance
+	if err := fixtures.LoadFixtureAs("reference/instance.json", &instance); err == nil {
+		m.AddInstance(instance.ID, &instance)
+	}
+	var group models.PatronGroup
+	if err := fixtures.LoadFixtureAs("reference/patron_group.json", &group); err == nil {
+		m.AddGroup(&group)
+	}
+	var location models.Location
+	if err := fixtures.LoadFixtureAs("reference/location.json", &location); err == nil {
+		m.AddLocation(&location)
+	}
+	var materialType models.MaterialType
+	if err := fixtures.LoadFixtureAs("reference/material_type.json", &materialType); err == nil {
+		m.AddMaterialType(&materialType)
+	}
+	var servicePoint models.ServicePoint
+	if err := fixtures.LoadFixtureAs("reference/service_point.json", &servicePoint); err == nil {
+		m.AddServicePoint(&servicePoint)
+	}
 }
 
 // AddUser adds a user to the mock server
