@@ -19,14 +19,6 @@ FSIP2 is a bridge application that connects self-service library kiosks with the
 - Prometheus metrics
 - Docker and Kubernetes deployment support
 
-## Recent Improvements
-
-### Security & Reliability Enhancements
-- **Token Expiration Validation**: Automatic detection and refresh of expired FOLIO authentication tokens with 90-second safety buffer
-- **Session Token Tracking**: Enhanced session management with token expiration timestamps
-- **Improved Error Handling**: Better handling of authentication failures and token refresh scenarios
-- **Keycloak Session Cleanup**: A SIP connection's Keycloak session is ended when the connection closes or a 93 Login replaces it, instead of staying alive until its refresh token expires. **Behaviour change:** if a 93 moves a connection to a different tenant and that login fails, the connection is no longer left authenticated with the previous tenant's tokens; it must log in again
-
 ### Testing & Code Quality
 - **Comprehensive Test Suite**: 86.9% overall coverage with most packages exceeding 85%
 - **Test Separation**: Unit, integration, and E2E tests properly organized with build tags
@@ -217,7 +209,7 @@ tenants:
   - tenant: lib2
     okapiUrl: https://okapi-lib2.example.com
     okapiTenant: lib2
-    charset: IBM850
+    charset: UTF-8
     logLevel: Patron
     timezone: America/Chicago
 ```

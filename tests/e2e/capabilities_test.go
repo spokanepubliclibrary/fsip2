@@ -31,7 +31,7 @@ const (
 	capPatronPIN     = "1234"
 	capItemBarcode   = "ITEM001" // default mock item (fixtures/items/available_item.json)
 	capItemID        = "item-1111-2222-3333-4444"
-	capFeeID         = "cap-fee"
+	capFeeID         = "c4a7e1f2-3b5d-4c6e-9f8a-1b2c3d4e5f60" // was "cap-fee"; SIP 37 CG must be a UUID
 )
 
 // newCapabilitySetup starts fsip2 with PIN verification on (so 63/23 call /patron-pin/verify)

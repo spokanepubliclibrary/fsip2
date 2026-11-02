@@ -6,6 +6,8 @@ import (
 	"net/url"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
+	"go.uber.org/zap"
 )
 
 // InventoryClient handles inventory operations
@@ -23,7 +25,7 @@ func NewInventoryClient(baseURL, tenant string) *InventoryClient {
 // GetItemByBarcode retrieves an item by barcode with expanded location details
 func (ic *InventoryClient) GetItemByBarcode(ctx context.Context, token string, barcode string) (*models.Item, error) {
 	// First, search for the item to get its ID
-	query := fmt.Sprintf("barcode==%s", barcode)
+	query := "barcode==" + cqlQuote(barcode)
 	path := fmt.Sprintf("/inventory/items?query=%s", url.QueryEscape(query))
 
 	var items models.ItemCollection
@@ -33,7 +35,18 @@ func (ic *InventoryClient) GetItemByBarcode(ctx context.Context, token string, b
 	}
 
 	if items.TotalRecords == 0 {
-		return nil, fmt.Errorf("item not found with barcode: %s", barcode)
+		return nil, fmt.Errorf("%w with barcode: %s", ErrItemNotFound, barcode)
+	}
+
+	// Barcodes are unique in FOLIO; never act on an arbitrary first match
+	if items.TotalRecords > 1 {
+		if ic.client.logger != nil {
+			ic.client.logger.Warn("ambiguous item barcode",
+				logging.TypeField(logging.TypeApplication),
+				zap.Int("total_records", items.TotalRecords),
+			)
+		}
+		return nil, fmt.Errorf("failed to get item: %w", ErrAmbiguousBarcode)
 	}
 
 	// Get the full item details by ID to get populated effectiveLocation

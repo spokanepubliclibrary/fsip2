@@ -49,6 +49,7 @@ tests/fixtures/
 - **single_fee.json** - Single outstanding fee (e.g., overdue fine)
 - **multiple_fees.json** - Multiple outstanding fees of different types
 - **paid_fee.json** - Fee that has been fully paid
+- **many_fees.json** - 15 open fees ($1.00 to $15.00, $120.00 in all) with UUID IDs: more than FOLIO's default page of 10
 
 ### Requests (`requests/`)
 

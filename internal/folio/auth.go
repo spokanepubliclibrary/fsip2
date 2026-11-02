@@ -27,6 +27,14 @@ var ErrNoRefreshToken = errors.New("no refresh token")
 // No HTTP call is made in that case.
 var ErrNotImplemented = errors.New("not implemented: placeholder")
 
+// ErrAmbiguousBarcode is returned by GetUserByBarcode and GetItemByBarcode when a barcode
+// matches more than one record. FOLIO barcodes are unique, so this is a guard against a
+// quoting regression: acting on an arbitrary first match would be worse than "not found".
+var ErrAmbiguousBarcode = errors.New("barcode matched more than one record")
+
+// ErrItemNotFound is returned (wrapped, with the barcode) by GetItemByBarcode when no item matches.
+var ErrItemNotFound = errors.New("item not found")
+
 // ErrInvalidRefreshToken is returned by Logout when the refresh token is not JWT-shaped.
 // No HTTP call is made in that case.
 var ErrInvalidRefreshToken = errors.New("refresh token is not JWT-shaped")

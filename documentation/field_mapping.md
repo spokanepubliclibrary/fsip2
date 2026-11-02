@@ -601,7 +601,7 @@ Truncation preserves UTF-8 multibyte characters correctly.
 | Valid Patron | BL | No | Patron valid (Y/N) | User → Active |
 | Valid Patron Password | CQ | No | Password valid (Y/N) | PIN verification result |
 | Currency Type | BH | No | Currency code | Configuration: currency |
-| Fee Amount | BV | No | Total outstanding fees (always present for a valid patron; `0.00` when the patron has no open fee/fine accounts) | Sum of open accounts |
+| Fee Amount | BV | No | Total outstanding fees (always present for a valid patron; `0.00` when the patron has no open fee/fine accounts) | Sum of all open, non-suspended accounts (no page cap) |
 | Screen Message | AF | No | Messages for display | Status messages |
 | Print Line | AG | No | Print messages | Not implemented |
 
@@ -715,7 +715,7 @@ Each position is 'Y' (true) or ' ' (space, false):
 | Patron Identifier | AA | Yes | Patron barcode | Request message |
 | Terminal Password | AC | No | Terminal password | Request message |
 | Patron Password | AD | No | Patron password/PIN | Request message |
-| Fee Identifier | CG | No | Account ID | Request message |
+| Fee Identifier | CG | No | Account ID (UUID; must belong to the AA patron) | Request message |
 | Transaction ID | BK | No | Transaction identifier | Request message |
 
 ### Response Fields (38)
@@ -745,12 +745,13 @@ notifyPatron: false          # Send email/SMS notification
 
 1. **With Fee Identifier (CG)**: Pay specific account
    - Use CG field as account ID
+   - The account must be a UUID, belong to the AA patron, be open and not suspended claim returned; otherwise it is treated as not eligible and the bulk fallback applies (or `38N` if bulk payment is disabled)
    - Call `/accounts/{accountId}/pay` with amount
 
 2. **Without Fee Identifier**: Bulk payment (if enabled)
    - Requires `acceptBulkPayment: true` in configuration
-   - Distributes payment across all open accounts
-   - Calls `/accounts/{userId}/pay` with amount
+   - Distributes payment across all open, non-suspended accounts (no page cap)
+   - Calls `/accounts-bulk/pay` with the account IDs and amount
 
 ---
 
@@ -814,13 +815,13 @@ Each position controls inclusion of detail fields (Y/N):
 | Valid Patron | BL | No | No | Patron valid (Y/N) | User → Active |
 | Valid Patron Password | CQ | No | No | Password valid (Y/N) | PIN verification result |
 | Currency Type | BH | No | No | Currency code | Configuration: currency |
-| Fee Amount | BV | No | No | Total outstanding fees (always present for a valid patron; `0.00` when the patron has no open fee/fine accounts) | Sum of accounts → Amount - Paid |
+| Fee Amount | BV | No | No | Total outstanding fees (always present for a valid patron; `0.00` when the patron has no open fee/fine accounts) | Sum of all open, non-suspended accounts (no page cap) → Amount - Paid |
 | Fee Limit | CC | No | No | Fee limit | Not implemented |
 | **Item Detail Fields (Controlled by Summary)** |
 | Hold Items | AS | No | Summary[0] | Hold item barcodes (repeatable) | Request → Item → Barcode |
 | Overdue Items | AT | No | Summary[1] | Overdue item barcodes (repeatable) | Loan → Item → Barcode (where overdue) |
 | Charged Items | AU | No | Summary[2] | Charged item barcodes (repeatable) | Loan → Item → Barcode |
-| Fine Items | AV | No | Summary[3] | Fine item barcodes (repeatable) | Account → Item → Barcode |
+| Fine Items | AV | No | Summary[3] | Fine item barcodes (repeatable; one per open, non-suspended account, no page cap) | Account → Item → Barcode |
 | Recall Items | BU | No | Summary[4] | Recall item barcodes (repeatable) | Not implemented |
 | Unavailable Holds | CD | No | Summary[5] | Unavailable hold barcodes (repeatable) | Request → Item → Barcode (where not awaiting pickup) |
 | **Patron Details** |

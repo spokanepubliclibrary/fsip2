@@ -7,7 +7,10 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
+	"go.uber.org/zap"
 )
 
 // PatronClient handles patron (user) operations
@@ -24,7 +27,7 @@ func NewPatronClient(baseURL, tenant string) *PatronClient {
 
 // GetUserByBarcode retrieves a user by barcode
 func (pc *PatronClient) GetUserByBarcode(ctx context.Context, token string, barcode string) (*models.User, error) {
-	query := fmt.Sprintf("barcode==%s", barcode)
+	query := "barcode==" + cqlQuote(barcode)
 	path := fmt.Sprintf("/users?query=%s", url.QueryEscape(query))
 
 	var users models.UserCollection
@@ -35,6 +38,17 @@ func (pc *PatronClient) GetUserByBarcode(ctx context.Context, token string, barc
 
 	if users.TotalRecords == 0 {
 		return nil, fmt.Errorf("user not found with barcode: %s", barcode)
+	}
+
+	// Barcodes are unique in FOLIO; never act on an arbitrary first match
+	if users.TotalRecords > 1 {
+		if pc.client.logger != nil {
+			pc.client.logger.Warn("ambiguous user barcode",
+				logging.TypeField(logging.TypeApplication),
+				zap.Int("total_records", users.TotalRecords),
+			)
+		}
+		return nil, fmt.Errorf("failed to get user: %w", ErrAmbiguousBarcode)
 	}
 
 	return &users.Users[0], nil
@@ -66,7 +80,8 @@ func (pc *PatronClient) GetUserByUsername(ctx context.Context, token string, use
 // GetManualBlocks retrieves manual blocks for a user
 func (pc *PatronClient) GetManualBlocks(ctx context.Context, token string, userID string) (*models.ManualBlockCollection, error) {
 	query := fmt.Sprintf("userId==%s", userID)
-	path := fmt.Sprintf("/manualblocks?query=%s", url.QueryEscape(query))
+	// Fetch every block; without an explicit limit FOLIO returns only its default page (10)
+	path := fmt.Sprintf("/manualblocks?limit=%d&query=%s", config.OKAPIUnlimitedLimit, url.QueryEscape(query))
 
 	var blocks models.ManualBlockCollection
 	err := pc.client.Get(ctx, path, token, &blocks)

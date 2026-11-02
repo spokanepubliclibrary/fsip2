@@ -17,6 +17,9 @@ import (
 	"github.com/spokanepubliclibrary/fsip2/tests/testutil"
 )
 
+// testPatronID is the AA patron's FOLIO user ID in direct paySingleAccount tests.
+const testPatronID = "patron-001"
+
 // feePaidMsg builds a FeePaid request with a specific patron barcode and amount.
 func feePaidMsg(barcode, amount string, extraFields ...map[parser.FieldCode]string) *parser.Message {
 	fields := map[parser.FieldCode]string{
@@ -51,7 +54,7 @@ func TestFeePaidHandle_SinglePayment_Success(t *testing.T) {
 	mockFees := &MockFeesClient{}
 
 	mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
-	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, "acc-001").Return(account, nil)
+	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, user.ID, "acc-001").Return(account, nil)
 	mockFees.On("PayAccount", mock.Anything, mock.Anything, "acc-001", mock.Anything).Return(payResp, nil)
 
 	h := NewFeePaidHandler(zap.NewNop(), tc)
@@ -166,7 +169,7 @@ func TestFeePaidHandle_AccountNotEligible(t *testing.T) {
 
 	mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
 	// Returns nil account — not found/not eligible.
-	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, "bad-acc").
+	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, user.ID, "bad-acc").
 		Return(nil, nil)
 
 	h := NewFeePaidHandler(zap.NewNop(), tc)
@@ -193,11 +196,11 @@ func TestPaySingleAccount_AccountNotEligible(t *testing.T) {
 	h := NewFeePaidHandler(zap.NewNop(), tc)
 
 	mockFees := &MockFeesClient{}
-	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, "acc-001").
+	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, testPatronID, "acc-001").
 		Return(nil, nil)
 
 	result, fallback := h.paySingleAccount(
-		context.Background(), mockFees, "token", "acc-001",
+		context.Background(), mockFees, "token", testPatronID, "acc-001",
 		5.00, "", "testuser", "cash", false,
 	)
 
@@ -214,18 +217,48 @@ func TestPaySingleAccount_PaymentFails(t *testing.T) {
 	account := testutil.DefaultAccount()
 
 	mockFees := &MockFeesClient{}
-	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, account.ID).
+	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, testPatronID, account.ID).
 		Return(account, nil)
 	mockFees.On("PayAccount", mock.Anything, mock.Anything, account.ID, mock.Anything).
 		Return(nil, fmt.Errorf("payment gateway error"))
 
 	result, fallback := h.paySingleAccount(
-		context.Background(), mockFees, "token", account.ID,
+		context.Background(), mockFees, "token", testPatronID, account.ID,
 		float64(account.Remaining), "", "testuser", "cash", false,
 	)
 
 	assert.False(t, result.success)
 	assert.False(t, fallback, "hard payment failure should not trigger fallback")
+	mockFees.AssertExpectations(t)
+}
+
+// TestPaySingleAccount_PaysFolioAccountID verifies that the patron ID is passed to
+// the eligibility lookup and that PayAccount uses the ID FOLIO returned, not the
+// device-supplied CG (which may differ in case).
+func TestPaySingleAccount_PaysFolioAccountID(t *testing.T) {
+	tc := testutil.NewTenantConfig()
+	h := NewFeePaidHandler(zap.NewNop(), tc)
+
+	const deviceID = "8E4B2A6C-1F3D-4A5B-B7C9-0D2E4F6A8B13"
+	account := &models.Account{
+		ID:        "8e4b2a6c-1f3d-4a5b-b7c9-0d2e4f6a8b13",
+		FeeFineID: "ff-001",
+		Remaining: models.FlexibleFloat(5.00),
+	}
+
+	mockFees := &MockFeesClient{}
+	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, testPatronID, deviceID).
+		Return(account, nil)
+	mockFees.On("PayAccount", mock.Anything, mock.Anything, account.ID, mock.Anything).
+		Return(&models.PaymentResponse{RemainingAmount: "0.00"}, nil)
+
+	result, fallback := h.paySingleAccount(
+		context.Background(), mockFees, "token", testPatronID, deviceID,
+		5.00, "", "testuser", "cash", false,
+	)
+
+	assert.True(t, result.success)
+	assert.False(t, fallback)
 	mockFees.AssertExpectations(t)
 }
 
@@ -236,11 +269,11 @@ func TestPaySingleAccount_EligibilityCheckFails(t *testing.T) {
 	h := NewFeePaidHandler(zap.NewNop(), tc)
 
 	mockFees := &MockFeesClient{}
-	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, "acc-001").
+	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, testPatronID, "acc-001").
 		Return(nil, fmt.Errorf("FOLIO unavailable"))
 
 	result, fallback := h.paySingleAccount(
-		context.Background(), mockFees, "token", "acc-001",
+		context.Background(), mockFees, "token", testPatronID, "acc-001",
 		5.00, "", "testuser", "cash", false,
 	)
 
@@ -393,7 +426,7 @@ func TestFeePaidHandle_SinglePaymentAPIFails_FolioErrorMessage(t *testing.T) {
 	mockFees := &MockFeesClient{}
 
 	mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
-	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, "acc-001").Return(account, nil)
+	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, user.ID, "acc-001").Return(account, nil)
 	mockFees.On("PayAccount", mock.Anything, mock.Anything, "acc-001", mock.Anything).
 		Return(nil, &folio.HTTPError{
 			StatusCode: 422,
@@ -521,7 +554,7 @@ func TestBulkPayment_FallbackFromCG(t *testing.T) {
 
 	mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
 	// CG lookup returns nil — account not eligible, triggers fallback.
-	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, "cg-bad").
+	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, user.ID, "cg-bad").
 		Return(nil, nil)
 	mockFees.On("GetOpenAccountsExcludingSuspended", mock.Anything, mock.Anything, user.ID).
 		Return(accounts, nil)
@@ -558,7 +591,7 @@ func TestBulkPayment_FallbackDisabled(t *testing.T) {
 
 	mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
 	// CG lookup returns nil — not eligible.
-	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, "cg-bad").
+	mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, user.ID, "cg-bad").
 		Return(nil, nil)
 	// PayBulkAccounts must NOT be called.
 

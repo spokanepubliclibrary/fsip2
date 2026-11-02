@@ -160,7 +160,7 @@ func (h *FeePaidHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 
 	if accountID != "" {
 		// Attempt single account payment
-		result, shouldFallback := h.paySingleAccount(ctx, feesClient, token, accountID, feeAmount, servicePointID, username, paymentMethod, notifyPatron)
+		result, shouldFallback := h.paySingleAccount(ctx, feesClient, token, patronID, accountID, feeAmount, servicePointID, username, paymentMethod, notifyPatron)
 
 		if result.success {
 			// Single payment succeeded
@@ -223,12 +223,14 @@ func (h *FeePaidHandler) Handle(ctx context.Context, msg *parser.Message, sessio
 	return h.buildSuccessResponse(institutionID, patronIdentifier, results, isBulkPayment, msg, session), nil
 }
 
-// paySingleAccount attempts to pay a single account
+// paySingleAccount attempts to pay a single account owned by patronID
 // Returns the payment result and a boolean indicating if fallback to bulk payment should be attempted
+// An account that belongs to another patron is treated as not eligible
 func (h *FeePaidHandler) paySingleAccount(
 	ctx context.Context,
 	feesClient FeesOps,
 	token string,
+	patronID string,
 	accountID string,
 	amount float64,
 	servicePointID string,
@@ -236,8 +238,8 @@ func (h *FeePaidHandler) paySingleAccount(
 	paymentMethod string,
 	notifyPatron bool,
 ) (paymentResult, bool) {
-	// Check if account exists and is eligible for payment
-	account, err := feesClient.GetEligibleAccountByID(ctx, token, accountID)
+	// Check if account exists, belongs to the patron and is eligible for payment
+	account, err := feesClient.GetEligibleAccountByID(ctx, token, patronID, accountID)
 	if err != nil {
 		h.logger.Error("Error checking account eligibility",
 			zap.String("account_id", accountID),
@@ -263,8 +265,8 @@ func (h *FeePaidHandler) paySingleAccount(
 		PaymentMethod:  paymentMethod,
 	}
 
-	// Execute payment
-	paymentResp, err := feesClient.PayAccount(ctx, token, accountID, paymentReq)
+	// Execute payment against the ID FOLIO returned, not the device-supplied one
+	paymentResp, err := feesClient.PayAccount(ctx, token, account.ID, paymentReq)
 	if err != nil {
 		h.logger.Error("Failed to pay account",
 			zap.String("account_id", accountID),
