@@ -3,10 +3,12 @@
 package e2e
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
 	"github.com/spokanepubliclibrary/fsip2/tests/testutil"
@@ -222,6 +224,143 @@ func TestE2E_Error_PatronNotFound(t *testing.T) {
 	resp := setup.Exchange(t, conn, testutil.NewPatronStatusMessage("test-inst", "NONEXISTENT"))
 	assert.True(t, len(resp) >= 2 && resp[:2] == "24", "Expected Patron Status Response (24), got: %s", resp)
 	t.Logf("Response for non-existent patron: %s", resp)
+}
+
+// ========== Barcode lookup safety (plan 04, D-04-2 / D-04-3) ==========
+
+const (
+	victimPatronBarcode = "PATRON_VICTIM"
+	victimPatronName    = "Victim"
+	victimItemBarcode   = "ITEM_VICTIM"
+)
+
+// addBarcodeVictims registers a patron and an item whose data a CQL mask or quote
+// injection in a device-supplied barcode could expose.
+func addBarcodeVictims(setup *E2ESetup) {
+	setup.MockFolio.AddUser(victimPatronBarcode, &models.User{
+		ID:       "user-victim",
+		Username: "patron_victim",
+		Barcode:  victimPatronBarcode,
+		Active:   true,
+		Personal: models.PersonalInfo{FirstName: "Other", LastName: victimPatronName},
+	})
+	setup.MockFolio.AddItem(victimItemBarcode, &models.Item{
+		ID:      "item-victim",
+		Barcode: victimItemBarcode,
+		Status:  models.ItemStatus{Name: "Available"},
+	})
+}
+
+// assertPatronNotFound checks a Patron Status Response (24) is the invalid-patron reply
+// and carries no other patron's name.
+func assertPatronNotFound(t *testing.T, resp string) {
+	t.Helper()
+	require.True(t, len(resp) >= 16, "Response too short: %s", resp)
+	assert.Equal(t, "24", resp[:2], "Expected Patron Status Response (24), got: %s", resp)
+	assert.Contains(t, resp, "|BLN", "Expected invalid patron (BLN) — full: %s", resp)
+	assert.NotContains(t, resp, victimPatronName, "another patron's data must not be returned — full: %s", resp)
+}
+
+// assertItemNotFound checks an Item Information Response (18) is the not-found reply.
+func assertItemNotFound(t *testing.T, resp string) {
+	t.Helper()
+	require.True(t, len(resp) >= 4, "Response too short: %s", resp)
+	assert.Equal(t, "18", resp[:2], "Expected Item Information Response (18), got: %s", resp)
+	assert.Equal(t, "01", resp[2:4], "Expected circulation status 01 (not found), got: %s", resp)
+	assert.Contains(t, resp, "Item not found", "Expected 'Item not found' — full: %s", resp)
+}
+
+// TestE2E_Error_BarcodeQuerySyntax tests that CQL masks and quotes in a patron or
+// item barcode are matched literally: the lookup is "not found" and never resolves
+// to another record.
+func TestE2E_Error_BarcodeQuerySyntax(t *testing.T) {
+	setup := NewE2ESetup(t)
+	defer setup.Close(t)
+	addBarcodeVictims(setup)
+
+	conn := setup.Connect(t)
+	defer conn.Close()
+	setup.Login(t, conn)
+
+	// Controls: the real barcodes resolve, so the not-found replies below mean something
+	resp := setup.Exchange(t, conn, testutil.NewPatronStatusMessage("test-inst", victimPatronBarcode))
+	require.Contains(t, resp, victimPatronName, "control: the victim patron must be found — full: %s", resp)
+	resp = setup.Exchange(t, conn, testutil.NewItemInformationMessage("test-inst", victimItemBarcode))
+	require.NotContains(t, resp, "Item not found", "control: the victim item must be found — full: %s", resp)
+
+	for _, barcode := range []string{"*", "PATRON_VICTI?", "PATRON_VIC*", `"`, `x" or barcode=="PATRON_VICTIM`} {
+		t.Run("patron "+barcode, func(t *testing.T) {
+			assertPatronNotFound(t, setup.Exchange(t, conn, testutil.NewPatronStatusMessage("test-inst", barcode)))
+		})
+	}
+	for _, barcode := range []string{"*", "ITEM_VICTI?", "ITEM_VIC*", `"`, `x" or barcode=="ITEM_VICTIM`} {
+		t.Run("item "+barcode, func(t *testing.T) {
+			assertItemNotFound(t, setup.Exchange(t, conn, testutil.NewItemInformationMessage("test-inst", barcode)))
+		})
+	}
+}
+
+// TestE2E_Error_AmbiguousBarcode tests that a barcode lookup returning two records
+// (impossible in real FOLIO, emulated with DuplicateBarcodes) is treated as not found.
+func TestE2E_Error_AmbiguousBarcode(t *testing.T) {
+	setup := NewE2ESetup(t)
+	defer setup.Close(t)
+	addBarcodeVictims(setup)
+	setup.MockFolio.DuplicateBarcodes[victimPatronBarcode] = 2
+	setup.MockFolio.DuplicateBarcodes[victimItemBarcode] = 2
+
+	conn := setup.Connect(t)
+	defer conn.Close()
+	setup.Login(t, conn)
+
+	assertPatronNotFound(t, setup.Exchange(t, conn, testutil.NewPatronStatusMessage("test-inst", victimPatronBarcode)))
+	assertItemNotFound(t, setup.Exchange(t, conn, testutil.NewItemInformationMessage("test-inst", victimItemBarcode)))
+}
+
+// TestE2E_ManyManualBlocks tests that all 12 manual blocks reach the patron status in
+// 23 and 63, not just FOLIO's default page of 10: only blocks 11 and 12 deny anything.
+func TestE2E_ManyManualBlocks(t *testing.T) {
+	setup := NewE2ESetup(t)
+	defer setup.Close(t)
+
+	const barcode = "PATRON_MANY_BLOCKS"
+	const userID = "user-many-blocks"
+	setup.MockFolio.AddUser(barcode, &models.User{
+		ID:       userID,
+		Username: "patron_many_blocks",
+		Barcode:  barcode,
+		Active:   true,
+	})
+	for i := 1; i <= 12; i++ {
+		setup.MockFolio.AddManualBlock(userID, &models.ManualBlock{
+			ID:        fmt.Sprintf("block-%02d", i),
+			Type:      "Manual",
+			Desc:      fmt.Sprintf("Block %d", i),
+			UserID:    userID,
+			Borrowing: i == 11,
+			Renewals:  i == 12,
+			Requests:  i == 12,
+		})
+	}
+
+	conn := setup.Connect(t)
+	defer conn.Close()
+	setup.Login(t, conn)
+
+	for _, tc := range []struct{ name, msg, code string }{
+		{"23", testutil.NewPatronStatusMessage("test-inst", barcode), "24"},
+		{"63", testutil.NewPatronInformationMessage("test-inst", barcode), "64"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := setup.Exchange(t, conn, tc.msg)
+			require.True(t, len(resp) >= 16, "Response too short: %s", resp)
+			assert.Equal(t, tc.code, resp[:2], "unexpected response — full: %s", resp)
+			status := resp[2:16]
+			assert.Equal(t, byte('Y'), status[0], "charge denied (block 11) — status %q", status)
+			assert.Equal(t, byte('Y'), status[1], "renewal denied (block 12) — status %q", status)
+			assert.Equal(t, byte('Y'), status[3], "hold denied (block 12) — status %q", status)
+		})
+	}
 }
 
 // ========== FOLIO API Errors ==========

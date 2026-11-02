@@ -86,7 +86,7 @@ func TestFeePaidHandler_DirtyFolioData_EndToEnd(t *testing.T) {
 		mockPatron := &MockPatronClient{}
 		mockFees := &MockFeesClient{}
 		mockPatron.On("GetUserByBarcode", mock.Anything, mock.Anything, user.Barcode).Return(user, nil)
-		mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, "acc-001").Return(account, nil)
+		mockFees.On("GetEligibleAccountByID", mock.Anything, mock.Anything, user.ID, "acc-001").Return(account, nil)
 		mockFees.On("PayAccount", mock.Anything, mock.Anything, "acc-001", mock.Anything).
 			Return(&models.PaymentResponse{RemainingAmount: "0.00"}, nil)
 

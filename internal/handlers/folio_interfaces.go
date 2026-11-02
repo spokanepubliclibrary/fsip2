@@ -48,7 +48,7 @@ type InventoryLookup interface {
 // FeesOps is the subset of folio.FeesClient methods used by handlers.
 type FeesOps interface {
 	GetOpenAccountsExcludingSuspended(ctx context.Context, token, userID string) (*models.AccountCollection, error)
-	GetEligibleAccountByID(ctx context.Context, token, accountID string) (*models.Account, error)
+	GetEligibleAccountByID(ctx context.Context, token, userID, accountID string) (*models.Account, error)
 	PayAccount(ctx context.Context, token, accountID string, payment *models.PaymentRequest) (*models.PaymentResponse, error)
 	PayBulkAccounts(ctx context.Context, token string, payment *models.Payment) error
 }

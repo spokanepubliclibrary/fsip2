@@ -234,7 +234,7 @@ func TestE2E_FeePaid_SingleAccountPathUnchanged(t *testing.T) {
 
 	const barcode = "SINGLE_PATRON"
 	const userID = "user-single"
-	const accountID = "acc-single-001"
+	const accountID = "4f1c9a2e-6b3d-4e8f-a1c5-7d9e2b4f6a80" // was "acc-single-001"; CG must be a UUID
 
 	setup.MockFolio.AddUser(barcode, &models.User{
 		ID:       userID,
@@ -265,4 +265,168 @@ func TestE2E_FeePaid_SingleAccountPathUnchanged(t *testing.T) {
 	assert.Equal(t, byte('Y'), resp[2], "Expected payment accepted (Y), got: %c — full: %s", resp[2], resp)
 	// /accounts-bulk/pay must NOT have been called
 	assert.Equal(t, 0, setup.MockFolio.BulkPayCallCount, "/accounts-bulk/pay must NOT be called for single-account path")
+	assert.Equal(t, []string{accountID}, setup.MockFolio.PayAccountRequests, "the CG account must be paid via /accounts/{id}/pay")
+}
+
+// ========== More accounts than FOLIO's default page (plan 04, F1) ==========
+
+const (
+	manyFeesBarcode = "MANY_FEES_PATRON"
+	manyFeesUserID  = "user-many-fees"
+	manyFeesTotal   = "120.00" // many_fees.json: $1.00 + $2.00 + ... + $15.00
+)
+
+// addManyFeesPatron registers a patron owning the 15 open accounts of many_fees.json
+// and returns their IDs. The mock serves only 10 records unless a limit is sent.
+func addManyFeesPatron(t *testing.T, setup *E2ESetup) []string {
+	accounts := testutil.MustLoadAccounts("many_fees")
+	require.Len(t, accounts, 15, "many_fees.json must hold 15 accounts")
+	ids := make([]string, 0, len(accounts))
+	ptrs := make([]*models.Account, 0, len(accounts))
+	for i := range accounts {
+		accounts[i].UserID = manyFeesUserID
+		ids = append(ids, accounts[i].ID)
+		ptrs = append(ptrs, &accounts[i])
+	}
+	addBulkPatron(setup, manyFeesBarcode, manyFeesUserID, ptrs)
+	return ids
+}
+
+// TestE2E_PatronInformation_ManyFeesTotal tests that SIP 63 BV covers all 15 open
+// accounts, not just FOLIO's default page of 10.
+func TestE2E_PatronInformation_ManyFeesTotal(t *testing.T) {
+	setup := NewE2ESetup(t)
+	defer setup.Close(t)
+	addManyFeesPatron(t, setup)
+
+	conn := setup.Connect(t)
+	defer conn.Close()
+	setup.Login(t, conn)
+
+	resp := setup.Exchange(t, conn, testutil.NewPatronInformationMessage("test-inst", manyFeesBarcode))
+
+	require.True(t, len(resp) >= 2, "Response too short: %s", resp)
+	assert.Equal(t, "64", resp[:2], "Expected Patron Information Response (64), got: %s", resp)
+	assert.Equal(t, manyFeesTotal, findSIP2Field(resp, "BV"), "BV must be the sum of all 15 accounts — full: %s", resp)
+}
+
+// TestE2E_FeePaid_BulkManyFees tests that a bulk payment of the full balance pays all
+// 15 open accounts with the full amount (no cap at the first page of 10).
+func TestE2E_FeePaid_BulkManyFees(t *testing.T) {
+	setup := NewE2ESetupBulk(t)
+	defer setup.Close(t)
+	ids := addManyFeesPatron(t, setup)
+
+	conn := setup.Connect(t)
+	defer conn.Close()
+	setup.Login(t, conn)
+
+	resp := setup.Exchange(t, conn, testutil.NewFeePaidMessage("test-inst", manyFeesBarcode, 120.00))
+
+	require.True(t, len(resp) >= 3, "Response too short: %s", resp)
+	assert.Equal(t, "38", resp[:2], "Expected Fee Paid Response (38), got: %s", resp)
+	assert.Equal(t, byte('Y'), resp[2], "Expected payment accepted (Y), got: %c — full: %s", resp[2], resp)
+	require.Equal(t, 1, setup.MockFolio.BulkPayCallCount, "Expected exactly 1 call to /accounts-bulk/pay")
+	assert.ElementsMatch(t, ids, setup.MockFolio.BulkPayRequests[0].AccountIds, "bulk payment must cover all 15 accounts")
+	assert.Equal(t, manyFeesTotal, setup.MockFolio.BulkPayRequests[0].Amount, "bulk payment must carry the full amount")
+}
+
+// ========== Single-account ownership and CG validation (D-04-4) ==========
+
+const (
+	crossPatronABarcode = "CROSS_PATRON_A"
+	crossPatronAUserID  = "user-cross-a"
+	crossPatronBBarcode = "CROSS_PATRON_B"
+	crossPatronBUserID  = "user-cross-b"
+	// patron B's open account, which patron A's kiosk session must never pay
+	crossPatronBAccount = "9b7d5c3a-1e2f-4a6b-8c9d-0e1f2a3b4c5d"
+)
+
+// addCrossPatrons registers patron A (three open accounts, $3.00) and patron B
+// (one open account) on the mock server.
+func addCrossPatrons(setup *E2ESetup) {
+	addBulkPatron(setup, crossPatronABarcode, crossPatronAUserID, mixedAccounts(crossPatronAUserID))
+	addBulkPatron(setup, crossPatronBBarcode, crossPatronBUserID, []*models.Account{{
+		ID:            crossPatronBAccount,
+		UserID:        crossPatronBUserID,
+		FeeFineID:     "ff-cross-b",
+		Remaining:     models.FlexibleFloat(10.00),
+		Status:        models.AccountStatus{Name: "Open"},
+		PaymentStatus: models.PaymentStatus{Name: "Outstanding"},
+	}})
+}
+
+// feePaidWithCG builds a Fee Paid (37) message for patron barcode with a CG field.
+func feePaidWithCG(barcode, amount, cg string) string {
+	return "3701USD20250110    081500|AOtest-inst|AA" + barcode + "|BV" + amount + "|CG" + cg + "\r"
+}
+
+// TestE2E_FeePaid_CrossPatronAccount tests that a CG naming another patron's open
+// account is treated as not eligible: that account is never paid, and the AA
+// patron's own fees are paid in bulk (bulk on) or the payment is declined (bulk off).
+func TestE2E_FeePaid_CrossPatronAccount(t *testing.T) {
+	t.Run("bulk enabled pays AA patron", func(t *testing.T) {
+		setup := NewE2ESetupBulk(t)
+		defer setup.Close(t)
+		addCrossPatrons(setup)
+
+		conn := setup.Connect(t)
+		defer conn.Close()
+		setup.Login(t, conn)
+
+		resp := setup.Exchange(t, conn, feePaidWithCG(crossPatronABarcode, "3.00", crossPatronBAccount))
+
+		require.True(t, len(resp) >= 3, "Response too short: %s", resp)
+		assert.Equal(t, "38", resp[:2], "Expected Fee Paid Response (38), got: %s", resp)
+		assert.Equal(t, byte('Y'), resp[2], "Expected bulk fallback accepted (Y), got: %c — full: %s", resp[2], resp)
+		assert.NotContains(t, setup.MockFolio.PayAccountRequests, crossPatronBAccount, "patron B's account must never be paid")
+		require.Equal(t, 1, setup.MockFolio.BulkPayCallCount, "Expected exactly 1 call to /accounts-bulk/pay")
+		assert.ElementsMatch(t, []string{"acc-a", "acc-b", "acc-c"}, setup.MockFolio.BulkPayRequests[0].AccountIds,
+			"bulk fallback must pay only patron A's accounts")
+	})
+
+	t.Run("bulk disabled declines", func(t *testing.T) {
+		setup := NewE2ESetup(t)
+		defer setup.Close(t)
+		addCrossPatrons(setup)
+
+		conn := setup.Connect(t)
+		defer conn.Close()
+		setup.Login(t, conn)
+
+		resp := setup.Exchange(t, conn, feePaidWithCG(crossPatronABarcode, "3.00", crossPatronBAccount))
+
+		require.True(t, len(resp) >= 3, "Response too short: %s", resp)
+		assert.Equal(t, "38", resp[:2], "Expected Fee Paid Response (38), got: %s", resp)
+		assert.Equal(t, byte('N'), resp[2], "Expected payment declined (N), got: %c — full: %s", resp[2], resp)
+		assert.Empty(t, setup.MockFolio.PayAccountRequests, "no account may be paid")
+		assert.Equal(t, 0, setup.MockFolio.BulkPayCallCount, "/accounts-bulk/pay must NOT be called when bulk disabled")
+	})
+}
+
+// TestE2E_FeePaid_NonUUIDCGFallsBackToBulk tests that a CG that is not a UUID
+// (a CQL mask or a quote-injection attempt) never pays a single account and
+// falls back to bulk payment of the AA patron's own fees.
+func TestE2E_FeePaid_NonUUIDCGFallsBackToBulk(t *testing.T) {
+	for _, cg := range []string{"*", `x" or id=="y`} {
+		t.Run(cg, func(t *testing.T) {
+			setup := NewE2ESetupBulk(t)
+			defer setup.Close(t)
+			addCrossPatrons(setup)
+
+			conn := setup.Connect(t)
+			defer conn.Close()
+			setup.Login(t, conn)
+
+			resp := setup.Exchange(t, conn, feePaidWithCG(crossPatronABarcode, "3.00", cg))
+
+			require.True(t, len(resp) >= 3, "Response too short: %s", resp)
+			assert.Equal(t, "38", resp[:2], "Expected Fee Paid Response (38), got: %s", resp)
+			assert.Equal(t, byte('Y'), resp[2], "Expected bulk fallback accepted (Y), got: %c — full: %s", resp[2], resp)
+			assert.Empty(t, setup.MockFolio.PayAccountRequests, "no single account may be paid for a non-UUID CG")
+			require.Equal(t, 1, setup.MockFolio.BulkPayCallCount, "Expected exactly 1 call to /accounts-bulk/pay")
+			assert.ElementsMatch(t, []string{"acc-a", "acc-b", "acc-c"}, setup.MockFolio.BulkPayRequests[0].AccountIds,
+				"bulk fallback must pay only patron A's accounts")
+		})
+	}
 }

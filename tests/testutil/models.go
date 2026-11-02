@@ -79,6 +79,15 @@ func MustLoadAccount(name string) *models.Account {
 	return a
 }
 
+// MustLoadAccounts loads every account in an account fixture collection (e.g. "many_fees").
+func MustLoadAccounts(name string) []models.Account {
+	var col models.AccountCollection
+	if err := fixtures.LoadFixtureAs("accounts/"+name+".json", &col); err != nil {
+		panic("testutil.MustLoadAccounts(" + name + "): " + err.Error())
+	}
+	return col.Accounts
+}
+
 // DefaultAccount returns a single open account from single_fee.json.
 func DefaultAccount() *models.Account { return MustLoadAccount("single_fee") }
 

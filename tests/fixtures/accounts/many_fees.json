@@ -1,0 +1,260 @@
+{
+  "accounts": [
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4001",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-01",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 1.00,
+      "remaining": 1.00,
+      "dateCreated": "2025-01-01T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4002",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-02",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 2.00,
+      "remaining": 2.00,
+      "dateCreated": "2025-01-02T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4003",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-03",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 3.00,
+      "remaining": 3.00,
+      "dateCreated": "2025-01-03T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4004",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-04",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 4.00,
+      "remaining": 4.00,
+      "dateCreated": "2025-01-04T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4005",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-05",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 5.00,
+      "remaining": 5.00,
+      "dateCreated": "2025-01-05T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4006",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-06",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 6.00,
+      "remaining": 6.00,
+      "dateCreated": "2025-01-06T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4007",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-07",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 7.00,
+      "remaining": 7.00,
+      "dateCreated": "2025-01-07T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4008",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-08",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 8.00,
+      "remaining": 8.00,
+      "dateCreated": "2025-01-08T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4009",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-09",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 9.00,
+      "remaining": 9.00,
+      "dateCreated": "2025-01-09T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4010",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-10",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 10.00,
+      "remaining": 10.00,
+      "dateCreated": "2025-01-10T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4011",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-11",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 11.00,
+      "remaining": 11.00,
+      "dateCreated": "2025-01-11T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4012",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-12",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 12.00,
+      "remaining": 12.00,
+      "dateCreated": "2025-01-12T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4013",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-13",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 13.00,
+      "remaining": 13.00,
+      "dateCreated": "2025-01-13T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4014",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-14",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 14.00,
+      "remaining": 14.00,
+      "dateCreated": "2025-01-14T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    },
+    {
+      "id": "6a0e4c1f-3b2d-4e5f-8a9b-0c1d2e3f4015",
+      "userId": "7c2f9e4a-1d3b-4a5c-9e8f-6b7a8c9d0e1f",
+      "itemId": "item-many-15",
+      "feeFineId": "ff-type-001",
+      "feeFineType": "Overdue fine",
+      "feeFineOwner": "Main Library",
+      "amount": 15.00,
+      "remaining": 15.00,
+      "dateCreated": "2025-01-15T10:00:00.000Z",
+      "status": {
+        "name": "Open"
+      },
+      "paymentStatus": {
+        "name": "Outstanding"
+      }
+    }
+  ],
+  "totalRecords": 15
+}

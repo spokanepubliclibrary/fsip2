@@ -3,12 +3,15 @@ package folio
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // Helper: create a minimal mock server with a single handler
@@ -64,6 +67,60 @@ func TestGetUserByBarcode_NotFound(t *testing.T) {
 	}
 }
 
+// ambiguousUsersServer returns two users for any barcode query
+func ambiguousUsersServer() *httptest.Server {
+	return newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := models.UserCollection{
+			Users:        []models.User{{ID: "user-001", Barcode: "111"}, {ID: "user-002", Barcode: "222"}},
+			TotalRecords: 2,
+		}
+		json.NewEncoder(w).Encode(resp)
+	})
+}
+
+func TestGetUserByBarcode_Ambiguous(t *testing.T) {
+	server := ambiguousUsersServer()
+	defer server.Close()
+
+	SetClientLogger(nil)
+	client := NewPatronClient(server.URL, "test-tenant")
+	user, err := client.GetUserByBarcode(context.Background(), "token", "123456")
+	if !errors.Is(err, ErrAmbiguousBarcode) {
+		t.Fatalf("Expected ErrAmbiguousBarcode, got: %v", err)
+	}
+	if user != nil {
+		t.Errorf("Expected no user on ambiguous match, got %s", user.ID)
+	}
+}
+
+func TestGetUserByBarcode_AmbiguousWarns(t *testing.T) {
+	server := ambiguousUsersServer()
+	defer server.Close()
+
+	// NewClient copies clientLogger at creation, so the logger must be set first
+	core, recorded := observer.New(zap.WarnLevel)
+	SetClientLogger(zap.New(core))
+	t.Cleanup(func() { SetClientLogger(nil) })
+
+	client := NewPatronClient(server.URL, "test-tenant")
+	if _, err := client.GetUserByBarcode(context.Background(), "token", "123456"); !errors.Is(err, ErrAmbiguousBarcode) {
+		t.Fatalf("Expected ErrAmbiguousBarcode, got: %v", err)
+	}
+
+	entries := recorded.FilterMessage("ambiguous user barcode").All()
+	if len(entries) != 1 {
+		t.Fatalf("Expected 1 ambiguity WARN, got %d", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if fields["total_records"] != int64(2) {
+		t.Errorf("Expected total_records=2, got %v", fields["total_records"])
+	}
+	if _, ok := fields["barcode"]; ok {
+		t.Errorf("WARN must not log the barcode, got fields %v", fields)
+	}
+}
+
 func TestGetUserByID_Success(t *testing.T) {
 	testUser := models.User{ID: "user-999", Username: "testuser", Active: true}
 
@@ -96,6 +153,9 @@ func TestGetManualBlocks_Success(t *testing.T) {
 	}
 
 	server := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("limit"); got != "2147483647" {
+			t.Errorf("Expected limit=2147483647, got %q (raw query: %s)", got, r.URL.RawQuery)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(blocks)
 	})

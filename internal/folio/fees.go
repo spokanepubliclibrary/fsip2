@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/spokanepubliclibrary/fsip2/internal/config"
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"github.com/spokanepubliclibrary/fsip2/internal/logging"
+	"go.uber.org/zap"
 )
 
 // FeesClient handles fees and fines operations
@@ -20,10 +23,16 @@ func NewFeesClient(baseURL, tenant string) *FeesClient {
 	}
 }
 
+// eligibleAccountCQL is the CQL predicate for an account that can be paid:
+// open, and not suspended as claim returned. It is shared by the bulk and
+// single-account queries so the two can never disagree.
+const eligibleAccountCQL = `status.name=="Open" and paymentStatus.name<>"Suspended claim returned"`
+
 // GetOpenAccountsExcludingSuspended retrieves open accounts for a user, excluding suspended claim returned items
 func (fc *FeesClient) GetOpenAccountsExcludingSuspended(ctx context.Context, token string, userID string) (*models.AccountCollection, error) {
-	query := fmt.Sprintf(`userId=="%s" and status.name=="Open" and paymentStatus.name<>"Suspended claim returned"`, userID)
-	path := fmt.Sprintf("/accounts?query=%s", url.QueryEscape(query))
+	query := "userId==" + cqlQuote(userID) + " and " + eligibleAccountCQL
+	// Fetch every open account; without an explicit limit FOLIO returns only its default page (10)
+	path := fmt.Sprintf("/accounts?limit=%d&query=%s", config.OKAPIUnlimitedLimit, url.QueryEscape(query))
 
 	var accounts models.AccountCollection
 	err := fc.client.Get(ctx, path, token, &accounts)
@@ -31,14 +40,33 @@ func (fc *FeesClient) GetOpenAccountsExcludingSuspended(ctx context.Context, tok
 		return nil, fmt.Errorf("failed to get open accounts excluding suspended: %w", err)
 	}
 
+	// Totals are computed from the returned accounts, so a short page would under-report fees
+	if accounts.TotalRecords > len(accounts.Accounts) {
+		if fc.client.logger != nil {
+			fc.client.logger.Warn("fee list truncated",
+				logging.TypeField(logging.TypeApplication),
+				zap.String("user_id", userID),
+				zap.Int("total_records", accounts.TotalRecords),
+				zap.Int("returned", len(accounts.Accounts)),
+			)
+		}
+	}
+
 	return &accounts, nil
 }
 
-// GetEligibleAccountByID retrieves an account by ID and checks if it's eligible for payment
-// An account is eligible if: status.name=="open" AND paymentStatus.name<>"Suspended claim returned"
-// Returns nil, nil if no eligible account is found
-func (fc *FeesClient) GetEligibleAccountByID(ctx context.Context, token string, accountID string) (*models.Account, error) {
-	query := fmt.Sprintf(`id=="%s" AND status.name=="open" AND paymentStatus.name<>"Suspended claim returned"`, accountID)
+// GetEligibleAccountByID retrieves an account by ID and checks that it is eligible for payment.
+// An account is eligible if it belongs to userID and matches eligibleAccountCQL
+// (open, and not suspended as claim returned).
+// Returns nil, nil if no eligible account is found, including when accountID is
+// not a UUID (no FOLIO call is made) or the account belongs to another user.
+func (fc *FeesClient) GetEligibleAccountByID(ctx context.Context, token string, userID string, accountID string) (*models.Account, error) {
+	// accountID is device-supplied (SIP 37 CG); anything FOLIO would not issue is not eligible
+	if !isUUID(accountID) {
+		return nil, nil
+	}
+
+	query := "id==" + cqlQuote(accountID) + " and userId==" + cqlQuote(userID) + " and " + eligibleAccountCQL
 	path := fmt.Sprintf("/accounts?query=%s", url.QueryEscape(query))
 
 	var accounts models.AccountCollection
@@ -64,7 +92,7 @@ func (fc *FeesClient) PayBulkAccounts(ctx context.Context, token string, payment
 // PayAccount pays a specific account using the /accounts/{accountId}/pay endpoint
 // Returns the payment response with remainingAmount and feefineactions
 func (fc *FeesClient) PayAccount(ctx context.Context, token string, accountID string, payment *models.PaymentRequest) (*models.PaymentResponse, error) {
-	path := fmt.Sprintf("/accounts/%s/pay", accountID)
+	path := fmt.Sprintf("/accounts/%s/pay", url.PathEscape(accountID))
 
 	var response models.PaymentResponse
 	err := fc.client.Post(ctx, path, token, payment, &response)

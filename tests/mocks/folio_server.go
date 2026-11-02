@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +78,8 @@ type FolioMockServer struct {
 	RefreshStatus        int                                     // When non-zero, /authn/refresh answers with this status (e.g. 503)
 	BulkPayCallCount     int                                     // Number of POST /accounts-bulk/pay calls received
 	BulkPayRequests      []models.Payment                        // All bulk payment request bodies received
+	PayAccountRequests   []string                                // Account IDs (from the path) of all POST /accounts/{id}/pay calls received
+	DuplicateBarcodes    map[string]int                          // barcode -> copies a user/item barcode lookup returns (ambiguity tests; FOLIO forbids duplicates)
 	Requests             map[string]*models.Request              // requestID -> request
 	Groups               map[string]*models.PatronGroup          // id -> patron group
 	Locations            map[string]*models.Location             // id -> location
@@ -94,25 +99,26 @@ type FolioMockServer struct {
 // NewFolioMockServer creates a new mock FOLIO server
 func NewFolioMockServer() *FolioMockServer {
 	mock := &FolioMockServer{
-		Users:           make(map[string]*models.User),
-		Items:           make(map[string]*models.Item),
-		Loans:           make(map[string]*models.Loan),
-		Holdings:        make(map[string]*models.Holdings),
-		Instances:       make(map[string]*models.Instance),
-		ManualBlocks:    make(map[string][]*models.ManualBlock),
-		AutomatedBlocks: make(map[string]*models.AutomatedPatronBlock),
-		Accounts:        make(map[string]*models.Account),
-		PatronPINs:      make(map[string]string),
-		Tokens:          make(map[string]string),
-		tokenEntries:    make(map[string]*tokenEntry),
-		refreshEntries:  make(map[string]*refreshEntry),
-		issuedAccess:    make(map[string]*tokenEntry),
-		issuedRefresh:   make(map[string]int),
-		Requests:        make(map[string]*models.Request),
-		Groups:          make(map[string]*models.PatronGroup),
-		Locations:       make(map[string]*models.Location),
-		MaterialTypes:   make(map[string]*models.MaterialType),
-		ServicePoints:   make(map[string]*models.ServicePoint),
+		Users:             make(map[string]*models.User),
+		Items:             make(map[string]*models.Item),
+		Loans:             make(map[string]*models.Loan),
+		Holdings:          make(map[string]*models.Holdings),
+		Instances:         make(map[string]*models.Instance),
+		ManualBlocks:      make(map[string][]*models.ManualBlock),
+		AutomatedBlocks:   make(map[string]*models.AutomatedPatronBlock),
+		Accounts:          make(map[string]*models.Account),
+		PatronPINs:        make(map[string]string),
+		Tokens:            make(map[string]string),
+		tokenEntries:      make(map[string]*tokenEntry),
+		refreshEntries:    make(map[string]*refreshEntry),
+		issuedAccess:      make(map[string]*tokenEntry),
+		issuedRefresh:     make(map[string]int),
+		Requests:          make(map[string]*models.Request),
+		Groups:            make(map[string]*models.PatronGroup),
+		Locations:         make(map[string]*models.Location),
+		MaterialTypes:     make(map[string]*models.MaterialType),
+		ServicePoints:     make(map[string]*models.ServicePoint),
+		DuplicateBarcodes: make(map[string]int),
 	}
 
 	// Create test server
@@ -446,38 +452,18 @@ func (m *FolioMockServer) issueTokens(w http.ResponseWriter, username string, se
 	})
 }
 
-// handleUsers handles user queries
+// handleUsers handles user queries (GET /users?query=barcode=="X"), honouring CQL
+// masks, escapes, limit and DuplicateBarcodes like FOLIO (see matchBarcodes)
 func (m *FolioMockServer) handleUsers(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("query")
-
-	// Extract barcode from query
-	var barcode string
-	if strings.Contains(query, "barcode==") {
-		parts := strings.Split(query, "barcode==")
-		if len(parts) > 1 {
-			barcode = strings.Trim(parts[1], "\"")
-		}
+	users := matchBarcodes(m.Users, r.URL.Query().Get("query"), m.DuplicateBarcodes)
+	response := struct {
+		Users        []*models.User `json:"users"`
+		TotalRecords int            `json:"totalRecords"`
+	}{
+		Users:        firstPage(users, requestLimit(r)),
+		TotalRecords: len(users),
 	}
-
-	if user, ok := m.Users[barcode]; ok {
-		response := struct {
-			Users        []*models.User `json:"users"`
-			TotalRecords int            `json:"totalRecords"`
-		}{
-			Users:        []*models.User{user},
-			TotalRecords: 1,
-		}
-		json.NewEncoder(w).Encode(response)
-	} else {
-		response := struct {
-			Users        []*models.User `json:"users"`
-			TotalRecords int            `json:"totalRecords"`
-		}{
-			Users:        []*models.User{},
-			TotalRecords: 0,
-		}
-		json.NewEncoder(w).Encode(response)
-	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleCheckout handles checkout requests
@@ -621,36 +607,15 @@ func (m *FolioMockServer) handleItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := r.URL.Query().Get("query")
-
-	// Extract barcode from query
-	var barcode string
-	if strings.Contains(query, "barcode==") {
-		parts := strings.Split(query, "barcode==")
-		if len(parts) > 1 {
-			barcode = strings.Trim(parts[1], "\"")
-		}
+	items := matchBarcodes(m.Items, r.URL.Query().Get("query"), m.DuplicateBarcodes)
+	response := struct {
+		Items        []*models.Item `json:"items"`
+		TotalRecords int            `json:"totalRecords"`
+	}{
+		Items:        firstPage(items, requestLimit(r)),
+		TotalRecords: len(items),
 	}
-
-	if item, ok := m.Items[barcode]; ok {
-		response := struct {
-			Items        []*models.Item `json:"items"`
-			TotalRecords int            `json:"totalRecords"`
-		}{
-			Items:        []*models.Item{item},
-			TotalRecords: 1,
-		}
-		json.NewEncoder(w).Encode(response)
-	} else {
-		response := struct {
-			Items        []*models.Item `json:"items"`
-			TotalRecords int            `json:"totalRecords"`
-		}{
-			Items:        []*models.Item{},
-			TotalRecords: 0,
-		}
-		json.NewEncoder(w).Encode(response)
-	}
+	json.NewEncoder(w).Encode(response)
 }
 
 // handleLoans handles loan queries
@@ -914,7 +879,7 @@ func (m *FolioMockServer) handleManualBlocks(w http.ResponseWriter, r *http.Requ
 	}
 
 	response := models.ManualBlockCollection{
-		ManualBlocks: manualBlocks,
+		ManualBlocks: firstPage(manualBlocks, requestLimit(r)),
 		TotalRecords: len(manualBlocks),
 	}
 	json.NewEncoder(w).Encode(response)
@@ -945,45 +910,191 @@ func (m *FolioMockServer) handleAccounts(w http.ResponseWriter, r *http.Request)
 	m.handleGetAccounts(w, r)
 }
 
-// handleGetAccounts handles GET /accounts?query=... matching by userId or id.
+// cqlQuotedTerm returns the value of the first `field=="..."` clause in query,
+// undoing backslash escapes (so `\"` yields `"`). The field name must start at
+// the beginning of the query or after a space or "(", so "id" does not match
+// inside "userId". ok is false when the clause is absent or unterminated.
+func cqlQuotedTerm(query, field string) (value string, ok bool) {
+	raw, ok := cqlQuotedRaw(query, field)
+	if !ok {
+		return "", false
+	}
+	literal, _ := cqlTermPattern(raw)
+	return literal, true
+}
+
+// cqlQuotedRaw returns the text between the quotes of the first `field=="..."`
+// clause in query, with its backslash escapes still in place (see cqlQuotedTerm).
+func cqlQuotedRaw(query, field string) (raw string, ok bool) {
+	prefix := field + `=="`
+	for from := 0; ; {
+		idx := strings.Index(query[from:], prefix)
+		if idx < 0 {
+			return "", false
+		}
+		idx += from
+		if idx == 0 || query[idx-1] == ' ' || query[idx-1] == '(' {
+			rest := query[idx+len(prefix):]
+			for i := 0; i < len(rest); i++ {
+				switch rest[i] {
+				case '\\':
+					i++ // the escaped character can't end the term
+				case '"':
+					return rest[:i], true
+				}
+			}
+			return "", false
+		}
+		from = idx + len(prefix)
+	}
+}
+
+// cqlTermPattern interprets a raw CQL term as FOLIO does: `\x` is a literal x, an
+// unescaped `*` matches any run of characters, `?` matches one character, and an
+// unescaped `^` is an anchor (dropped; terms here always match the whole value).
+// literal is always the term with its escapes undone; mask is nil unless the term
+// has an unescaped `*` or `?`.
+func cqlTermPattern(raw string) (literal string, mask *regexp.Regexp) {
+	var lit, re strings.Builder
+	masked := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if c == '\\' {
+			if i+1 < len(raw) {
+				i++
+				lit.WriteByte(raw[i])
+				re.WriteString(regexp.QuoteMeta(raw[i : i+1]))
+			}
+			continue
+		}
+		lit.WriteByte(c)
+		switch c {
+		case '*':
+			masked = true
+			re.WriteString(".*")
+		case '?':
+			masked = true
+			re.WriteString(".")
+		case '^':
+			// anchor
+		default:
+			re.WriteString(regexp.QuoteMeta(raw[i : i+1]))
+		}
+	}
+	if !masked {
+		return lit.String(), nil
+	}
+	return lit.String(), regexp.MustCompile("^(?s:" + re.String() + ")$")
+}
+
+// cqlBarcodeTerm returns the raw (still escaped) term of a barcode lookup: the quoted
+// barcode=="..." that fsip2 sends, or the legacy unquoted barcode==X, which runs to
+// the next space or ")".
+func cqlBarcodeTerm(query string) (raw string, ok bool) {
+	if raw, ok := cqlQuotedRaw(query, "barcode"); ok {
+		return raw, true
+	}
+	idx := strings.Index(query, "barcode==")
+	if idx < 0 {
+		return "", false
+	}
+	rest := strings.TrimPrefix(query[idx+len("barcode=="):], `"`)
+	if end := strings.IndexAny(rest, " )"); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.TrimSuffix(rest, `"`), true
+}
+
+// matchBarcodes returns the records a barcode lookup query selects, as FOLIO would:
+// an exact match, or every record whose barcode fits an unescaped CQL mask (sorted by
+// barcode). A barcode listed in duplicates is returned that many times, emulating
+// duplicate barcodes (which real FOLIO forbids).
+func matchBarcodes[T any](records map[string]*T, query string, duplicates map[string]int) []*T {
+	matched := []*T{}
+	raw, ok := cqlBarcodeTerm(query)
+	if !ok {
+		return matched
+	}
+	var barcodes []string
+	if literal, mask := cqlTermPattern(raw); mask == nil {
+		if _, ok := records[literal]; ok {
+			barcodes = append(barcodes, literal)
+		}
+	} else {
+		for barcode := range records {
+			if mask.MatchString(barcode) {
+				barcodes = append(barcodes, barcode)
+			}
+		}
+		sort.Strings(barcodes)
+	}
+	for _, barcode := range barcodes {
+		copies := duplicates[barcode]
+		if copies < 1 {
+			copies = 1
+		}
+		for i := 0; i < copies; i++ {
+			matched = append(matched, records[barcode])
+		}
+	}
+	return matched
+}
+
+// defaultFolioLimit is FOLIO's page size when a collection request has no limit parameter.
+const defaultFolioLimit = 10
+
+// requestLimit returns the request's limit parameter, or FOLIO's default page size
+// when it is absent or not a non-negative number.
+func requestLimit(r *http.Request) int {
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n >= 0 {
+		return n
+	}
+	return defaultFolioLimit
+}
+
+// firstPage returns at most limit elements of records, as a FOLIO collection page;
+// callers report len(records) as totalRecords.
+func firstPage[T any](records []T, limit int) []T {
+	if len(records) > limit {
+		return records[:limit]
+	}
+	return records
+}
+
+// handleGetAccounts handles GET /accounts?query=... filtering by userId and/or id
+// (both must match when both are present, as in the single-account eligibility query).
 // It honours the CQL clause paymentStatus.name<>"Suspended claim returned" when present.
 func (m *FolioMockServer) handleGetAccounts(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("query")
 	excludeSuspended := strings.Contains(query, `paymentStatus.name<>"Suspended claim returned"`)
 
-	var matchingAccounts []models.Account
+	userID, hasUserID := cqlQuotedTerm(query, "userId")
+	accountID, hasAccountID := cqlQuotedTerm(query, "id")
 
-	if idx := strings.Index(query, `userId=="`); idx >= 0 {
-		rest := query[idx+9:] // skip userId=="
-		if end := strings.Index(rest, `"`); end >= 0 {
-			userID := rest[:end]
-			for _, account := range m.Accounts {
-				if account.UserID == userID {
-					if excludeSuspended && account.PaymentStatus.Name == "Suspended claim returned" {
-						continue
-					}
-					matchingAccounts = append(matchingAccounts, *account)
-				}
+	var matchingAccounts []models.Account
+	if hasUserID || hasAccountID {
+		for _, account := range m.Accounts {
+			if hasUserID && account.UserID != userID {
+				continue
 			}
-		}
-	} else if idx := strings.Index(query, `id=="`); idx >= 0 {
-		rest := query[idx+5:] // skip id=="
-		if end := strings.Index(rest, `"`); end >= 0 {
-			accountID := rest[:end]
-			if account, ok := m.Accounts[accountID]; ok {
-				if !excludeSuspended || account.PaymentStatus.Name != "Suspended claim returned" {
-					matchingAccounts = append(matchingAccounts, *account)
-				}
+			if hasAccountID && account.ID != accountID {
+				continue
 			}
+			if excludeSuspended && account.PaymentStatus.Name == "Suspended claim returned" {
+				continue
+			}
+			matchingAccounts = append(matchingAccounts, *account)
 		}
 	}
 
 	if matchingAccounts == nil {
 		matchingAccounts = []models.Account{}
 	}
+	// Stable order, so the default page of 10 is the same on every call
+	sort.Slice(matchingAccounts, func(i, j int) bool { return matchingAccounts[i].ID < matchingAccounts[j].ID })
 
 	response := models.AccountCollection{
-		Accounts:     matchingAccounts,
+		Accounts:     firstPage(matchingAccounts, requestLimit(r)),
 		TotalRecords: len(matchingAccounts),
 	}
 	json.NewEncoder(w).Encode(response)
@@ -1014,6 +1125,7 @@ func (m *FolioMockServer) handlePayAccount(w http.ResponseWriter, r *http.Reques
 	withoutSuffix := strings.TrimSuffix(r.URL.Path, "/pay")
 	pathParts := strings.Split(withoutSuffix, "/")
 	accountID := pathParts[len(pathParts)-1]
+	m.PayAccountRequests = append(m.PayAccountRequests, accountID)
 
 	var payReq models.PaymentRequest
 	if err := json.NewDecoder(r.Body).Decode(&payReq); err != nil {

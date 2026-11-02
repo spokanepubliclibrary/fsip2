@@ -3,12 +3,15 @@ package folio
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/spokanepubliclibrary/fsip2/internal/folio/models"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestGetItemByBarcode_Success(t *testing.T) {
@@ -76,6 +79,99 @@ func TestGetItemByBarcode_NotFound(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "item not found") {
 		t.Errorf("Expected 'item not found' error, got: %v", err)
+	}
+	if !errors.Is(err, ErrItemNotFound) {
+		t.Errorf("Expected errors.Is(err, ErrItemNotFound), got: %v", err)
+	}
+	// The message text is unchanged from before ErrItemNotFound was introduced
+	if got, want := err.Error(), "item not found with barcode: nonexistent"; got != want {
+		t.Errorf("Expected message %q, got %q", want, got)
+	}
+}
+
+func TestGetItemByBarcode_HTTPErrorIsNotItemNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewInventoryClient(server.URL, "test-tenant")
+	_, err := client.GetItemByBarcode(context.Background(), "test-token", "123456")
+	if err == nil {
+		t.Fatal("Expected error for HTTP 500")
+	}
+	if errors.Is(err, ErrItemNotFound) {
+		t.Errorf("An HTTP error must not be ErrItemNotFound, got: %v", err)
+	}
+	if errors.Is(err, ErrAmbiguousBarcode) {
+		t.Errorf("An HTTP error must not be ErrAmbiguousBarcode, got: %v", err)
+	}
+}
+
+// ambiguousItemsServer returns two items for a barcode search and counts by-ID lookups
+func ambiguousItemsServer(byIDCalls *int) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/inventory/items" {
+			collection := models.ItemCollection{
+				Items:        []models.Item{{ID: "item-1", Barcode: "111"}, {ID: "item-2", Barcode: "222"}},
+				TotalRecords: 2,
+			}
+			json.NewEncoder(w).Encode(collection)
+			return
+		}
+		*byIDCalls++
+		json.NewEncoder(w).Encode(models.Item{ID: "item-1"})
+	}))
+}
+
+func TestGetItemByBarcode_Ambiguous(t *testing.T) {
+	byIDCalls := 0
+	server := ambiguousItemsServer(&byIDCalls)
+	defer server.Close()
+
+	SetClientLogger(nil)
+	client := NewInventoryClient(server.URL, "test-tenant")
+	item, err := client.GetItemByBarcode(context.Background(), "test-token", "123456")
+	if !errors.Is(err, ErrAmbiguousBarcode) {
+		t.Fatalf("Expected ErrAmbiguousBarcode, got: %v", err)
+	}
+	if errors.Is(err, ErrItemNotFound) {
+		t.Errorf("Ambiguous match must not be ErrItemNotFound, got: %v", err)
+	}
+	if item != nil {
+		t.Errorf("Expected no item on ambiguous match, got %s", item.ID)
+	}
+	if byIDCalls != 0 {
+		t.Errorf("Expected no by-ID lookup on ambiguous match, got %d", byIDCalls)
+	}
+}
+
+func TestGetItemByBarcode_AmbiguousWarns(t *testing.T) {
+	byIDCalls := 0
+	server := ambiguousItemsServer(&byIDCalls)
+	defer server.Close()
+
+	// NewClient copies clientLogger at creation, so the logger must be set first
+	core, recorded := observer.New(zap.WarnLevel)
+	SetClientLogger(zap.New(core))
+	t.Cleanup(func() { SetClientLogger(nil) })
+
+	client := NewInventoryClient(server.URL, "test-tenant")
+	if _, err := client.GetItemByBarcode(context.Background(), "test-token", "123456"); !errors.Is(err, ErrAmbiguousBarcode) {
+		t.Fatalf("Expected ErrAmbiguousBarcode, got: %v", err)
+	}
+
+	entries := recorded.FilterMessage("ambiguous item barcode").All()
+	if len(entries) != 1 {
+		t.Fatalf("Expected 1 ambiguity WARN, got %d", len(entries))
+	}
+	fields := entries[0].ContextMap()
+	if fields["total_records"] != int64(2) {
+		t.Errorf("Expected total_records=2, got %v", fields["total_records"])
+	}
+	if _, ok := fields["barcode"]; ok {
+		t.Errorf("WARN must not log the barcode, got fields %v", fields)
 	}
 }
 

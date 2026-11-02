@@ -20,6 +20,8 @@ When a Patron Information request (63) is received, the server:
    - Not suspended claim returned status
 3. **Includes fee/fine data in the response** based on the summary field
 
+All of the patron's open, non-suspended accounts are fetched; there is no page cap. The BV total, the AV list and bulk payment (message 37) all cover every eligible account, not just the first page of results.
+
 ### Response Format
 
 The Patron Information response (64) includes fee/fine information in multiple ways:
@@ -105,7 +107,7 @@ The Fee Paid handler supports two payment modes:
 - **BV** - Fee Amount: Amount to pay (must be positive)
 - **AO** - Institution ID: Service point UUID
 - **AA** - Patron Identifier: Patron barcode
-- **CG** - Fee Identifier (optional): FOLIO account UUID from AV field
+- **CG** - Fee Identifier (optional): FOLIO account UUID from AV field. The account must belong to the AA patron
 
 #### Optional Fields
 
@@ -126,17 +128,21 @@ When a **CG field** (account ID) is provided:
 
 1. **Validates** patron credentials if required
 2. **Checks account eligibility**:
+   - CG must be a valid UUID
    - Account must exist
+   - Account must belong to the patron identified by AA
    - Account must be open
    - Account must not be suspended claim returned
 3. **Applies full payment** to the specified account
-4. **Fallback behavior**: If account not eligible and `acceptBulkPayment` is enabled, falls back to bulk payment via `/accounts-bulk/pay`
+4. **Fallback behavior**: If account not eligible and `acceptBulkPayment` is enabled, falls back to bulk payment via `/accounts-bulk/pay`. If bulk payment is disabled, a `38N` error is returned
+
+A CG that isn't a UUID, or that names another patron's account, is treated the same as any other ineligible account: fsip2 never pays it, and the fallback above applies (bulk payment of the AA patron's own accounts, or `38N` if bulk payment is disabled).
 
 See `internal/handlers/fee_paid.go` for the single payment implementation.
 
 ### Bulk Payment
 
-When **no CG field** is provided (or the identified account is not eligible) and `acceptBulkPayment` is `true`, fsip2 fetches all eligible open accounts for the patron (excluding accounts with `paymentStatus` of `Suspended claim returned`), caps the payment amount to the total outstanding balance, and sends a single request to FOLIO's `/accounts-bulk/pay` endpoint with the total amount and all eligible account IDs. FOLIO distributes the payment across accounts server-side, capping each account at its remaining balance.
+When **no CG field** is provided (or the identified account is not eligible) and `acceptBulkPayment` is `true`, fsip2 fetches all eligible open accounts for the patron, with no page cap (excluding accounts with `paymentStatus` of `Suspended claim returned`), caps the payment amount to the total outstanding balance, and sends a single request to FOLIO's `/accounts-bulk/pay` endpoint with the total amount and all eligible account IDs. FOLIO distributes the payment across accounts server-side, capping each account at its remaining balance.
 
 **Over-payment behavior**: If the requested payment amount exceeds the patron's total outstanding balance, fsip2 caps the payment to the total outstanding amount before calling the API. This matches the behavior of the Java reference implementation and prevents FOLIO from rejecting the payment with a 422 error.
 
@@ -182,9 +188,8 @@ Common error messages:
 - `"Validation failed"` - Missing required fields
 - `"Invalid fee amount"` - Amount is zero, negative, or not a valid number
 - `"Authentication failed"` - System authentication token unavailable
-- `"No fee/fine could be found by ID"` - Account ID not found or not eligible
 - `"Account ID required"` - No CG field provided and bulk payment disabled
-- `"Payment failed - see staff for details"` - All payment attempts failed
+- `"Payment failed - see staff for details"` - All payment attempts failed, or the CG account was not found or not eligible (not a UUID, closed, suspended, or owned by another patron) and bulk payment is disabled. A FOLIO error message is returned in its place when FOLIO supplies one
 
 ### Payment Flow Diagram
 
